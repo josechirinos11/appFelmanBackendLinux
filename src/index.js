@@ -28,7 +28,8 @@ app.use(errors());
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
+const HOST = '0.0.0.0';  // escucha en TODAS las IPs
 
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
-}); 
+app.listen(PORT, HOST, () => {
+  console.log(`Servidor corriendo en ${HOST}:${PORT}`);
+});
