@@ -11,7 +11,10 @@ const testRouter = require('./routes/test.router');
 const app = express();
 
 // Middleware
-app.use(cors());
+// ① Habilita CORS para que tu app nativa pueda llamar al API
+app.use(cors({
+  origin: '*'            // en producción define aquí el dominio de tu app
+}));
 app.use(express.json());
 
 // Rutas
