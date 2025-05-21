@@ -7,6 +7,12 @@ const router = express.Router();
 
 // Ruta de test: comprueba que el servidor y la BD responden correctamente
 router.get('/', async (req, res, next) => {
+      // ① Obtener IP real del cliente
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+  // ② Loguear en consola la petición y la IP
+  console.log(`[${new Date().toISOString()}] GET /test desde IP: ${ip}`);
+
   try {
     // Ejecutamos una consulta simple para verificar conexión a la base de datos
     // Le puse un alias "test" con un valor fijo (p.ej. 2) para que rows[0].test exista
