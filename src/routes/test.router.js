@@ -26,7 +26,7 @@ router.get('/', async (req, res, next) => {
     res.json({
       server: 'online',
       database: 'connected',
-      testResult: rows[0].test  // ahora sí existe y vale 2
+      testResult: rows  // ahora sí existe y vale 2
     });
   } catch (error) {
     next(error);
