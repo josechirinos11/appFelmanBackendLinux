@@ -7,6 +7,7 @@ const router = express.Router();
 
 // Ruta de test: comprueba que el servidor y la BD responden correctamente
 router.get('/', async (req, res, next) => {
+  console.log('Cargando test.router.js');
       // ① Obtener IP real del cliente
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
