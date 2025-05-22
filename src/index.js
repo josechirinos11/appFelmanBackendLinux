@@ -20,6 +20,7 @@ app.use(express.json());
 // Rutas
 app.use('/auth', authRoutes);
 app.use('/clientes', clientesRoutes);
+console.log('Registrando ruta /test');
 app.use('/test', testRouter);
 
 
