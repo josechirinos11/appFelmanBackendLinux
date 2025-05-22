@@ -4,6 +4,7 @@ const cors = require('cors');
 const { errors } = require('celebrate');
 const authRoutes = require('./routes/auth.routes');
 const clientesRoutes = require('./routes/clientes.routes');
+const testRoutes = require('./routes/test.routes');
 const errorHandler = require('./middleware/errorHandler');
 const testRouter = require('./routes/test.router');
 
@@ -20,17 +21,12 @@ app.use(express.json());
 // Rutas
 app.use('/auth', authRoutes);
 app.use('/clientes', clientesRoutes);
-console.log('Registrando ruta /test');
-app.use('/test', testRouter);
-
-
 // Manejo de errores
 app.use(errors());
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
-const HOST = '0.0.0.0';  // escucha en TODAS las IPs
 
-app.listen(PORT, HOST, () => {
-  console.log(`Servidor corriendo en ${HOST}:${PORT}`);
-});
+app.listen(PORT, () => {
+  console.log(`Servidor corriendo en puerto ${PORT}`);
+}); 
