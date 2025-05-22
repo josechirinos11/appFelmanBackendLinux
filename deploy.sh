@@ -17,4 +17,4 @@ docker run -d -p 3000:3000 --name app-felman app-felman-backend
 echo "Verificando estado del contenedor..."
 docker ps | grep app-felman
 
-echo "¡Despliegue completado! La aplicación está corriendo en http://85.59.0.105:3000" 
+echo "¡Despliegue completado! La aplicación está corriendo en http://85.59.0.105:3000"
