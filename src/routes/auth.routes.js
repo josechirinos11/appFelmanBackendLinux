@@ -1,5 +1,5 @@
 const express = require('express');
-const { celebrate, Joi } = require('celebrate');
+const { celebrate, Joi, Segments } = require('celebrate');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
@@ -16,10 +16,13 @@ const registerValidation = celebrate({
 });
 
 // Validación de login
+
+
 const loginValidation = celebrate({
-  body: Joi.object({
+  [Segments.BODY]: Joi.object().keys({
     nombre: Joi.string().required(),
-   // password: Joi.string().required()
+    // Si quieres permitir que password venga vacío (""), usa allow():
+    password: Joi.string().allow('').required()
   })
 });
 
