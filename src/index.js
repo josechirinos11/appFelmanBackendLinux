@@ -3,8 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { errors } = require('celebrate');
 const authRoutes = require('./routes/auth.routes');
-const clientesRoutes = require('./routes/clientes.routes');
-const testRoutes = require('./routes/test.routes');
+
 const errorHandler = require('./middleware/errorHandler');
 const testRouter = require('./routes/test.router');
 const webhookRoutes = require('./routes/webhook.routes');
@@ -20,18 +19,22 @@ app.use(cors({
 app.use(express.json());
 
 // Rutas
+app.use('/webhook', webhookRoutes);// Rutas para el webhook
+app.use('/test', testRouter);
 
 app.use('/auth', authRoutes);
-app.use('/clientes', clientesRoutes);
-console.log('Registrando ruta /test');
-app.use('/test', testRouter);
-app.use('/webhook', webhookRoutes);
+
+
+
+
+
 // Manejo de errores
 app.use(errors());
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
+const HOST = '0.0.0.0'; // Permite conexiones desde cualquier IP
 
-app.listen(PORT, () => {
+app.listen(PORT, HOST, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });

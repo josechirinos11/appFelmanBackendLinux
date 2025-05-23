@@ -48,6 +48,8 @@ router.post('/register', registerValidation, async (req, res, next) => {
 
 // Login
 router.post('/login', loginValidation, async (req, res, next) => {
+  console.log('EN autenticación');
+  console.log('req.body', req.body);
   try {
     const { nombre, password } = req.body;
 
