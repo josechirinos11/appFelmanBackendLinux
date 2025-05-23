@@ -1,0 +1,3 @@
+curl -X POST http://128.0.0.253:3000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"nombre":"jeronimo","password":""}'
