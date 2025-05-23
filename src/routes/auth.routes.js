@@ -18,8 +18,8 @@ const registerValidation = celebrate({
 // Validación de login
 const loginValidation = celebrate({
   body: Joi.object({
-    username: Joi.string().required(),
-    password: Joi.string().required()
+    nombre: Joi.string().required(),
+   // password: Joi.string().required()
   })
 });
 
@@ -46,11 +46,12 @@ router.post('/register', registerValidation, async (req, res, next) => {
 // Login
 router.post('/login', loginValidation, async (req, res, next) => {
   try {
-    const { username, password } = req.body;
+    const { nombre, password } = req.body;
 
+    // Buscar usuario por nombre
     const [users] = await pool.execute(
-      'SELECT * FROM usuario_app_felman WHERE username = ?',
-      [username]
+      'SELECT * FROM usuario_app_felman WHERE nombre = ?',
+      [nombre]
     );
 
     if (users.length === 0) {
@@ -58,14 +59,14 @@ router.post('/login', loginValidation, async (req, res, next) => {
     }
 
     const user = users[0];
-    const validPassword = await bcrypt.compare(password, user.password);
-
-    if (!validPassword) {
+    // Verificar contraseña (en texto plano, si no está hasheada)
+    if (password !== user.contraseña) {
       return res.status(401).json({ message: 'Credenciales inválidas' });
     }
 
+    // Generar token JWT
     const token = jwt.sign(
-      { userId: user.id, username: user.username },
+      { userId: user.id, nombre: user.nombre, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -76,4 +77,4 @@ router.post('/login', loginValidation, async (req, res, next) => {
   }
 });
 
-module.exports = router; 
+module.exports = router;
