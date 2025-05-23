@@ -64,12 +64,7 @@ router.get('/usuarios', async (req, res) => {
     const [columns] = await connection.query(`SELECT * FROM usuario_app_felman`);
 
     // Obtener los últimos 10 clientes creados
-    const [clientes] = await connection.query(`
-      SELECT Codigo, Nombre, FechaAlta
-      FROM clientes 
-      ORDER BY FechaAlta DESC 
-      LIMIT 10
-    `);
+    const [clientes] = await connection.query(`SELECT * FROM usuario_app_felman`);
 
     connection.release();
 
