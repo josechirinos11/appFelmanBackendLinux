@@ -1,3 +1,11 @@
+login
+http://128.0.0.253:3000/auth/login
 curl -X POST http://128.0.0.253:3000/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"nombre":"jeronimo","password":""}'
+  -d '{"nombre":"jeronimo","password":"jero2025"}'
+
+register
+http://128.0.0.253:3000/auth/register
+curl -X POST http://128.0.0.253:3000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"TU_USUARIO","password":"TU_CONTRASEÑA"}'

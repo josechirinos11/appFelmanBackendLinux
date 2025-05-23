@@ -11,7 +11,7 @@ const registerValidation = celebrate({
   body: Joi.object({
     username: Joi.string().required(),
     password: Joi.string().min(6).required(),
-    email: Joi.string().email().required()
+   
   })
 });
 
@@ -29,12 +29,12 @@ const loginValidation = celebrate({
 // Registro de usuario
 router.post('/register', registerValidation, async (req, res, next) => {
   try {
-    const { username, password, email } = req.body;
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const { username, password } = req.body;
+    
 
     const [result] = await pool.execute(
-      'INSERT INTO usuarios (username, password, email) VALUES (?, ?, ?)',
-      [username, hashedPassword, email]
+      'INSERT INTO usuarios (nombre, contraseña) VALUES (?, ?, ?)',
+      [username, password]
     );
 
     res.status(201).json({
