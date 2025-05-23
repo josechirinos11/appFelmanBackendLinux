@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Verificar si el usuario tiene permisos de sudo
+if ! sudo -v &> /dev/null; then
+    echo "Error: No tienes permisos de sudo. Por favor, contacta al administrador del sistema."
+    exit 1
+fi
+
 # Verificar si Docker está instalado
 if ! command -v docker &> /dev/null; then
     echo "Docker no está instalado. Instalando Docker..."
@@ -12,28 +18,37 @@ if ! command -v docker &> /dev/null; then
         apt-transport-https \
         ca-certificates \
         curl \
-        software-properties-common
-    
+        gnupg \
+        lsb-release
+
     # Agregar la clave GPG oficial de Docker
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-    
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
     # Agregar el repositorio de Docker
-    sudo add-apt-repository \
-        "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
-        $(lsb_release -cs) \
-        stable"
-    
+    echo \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+        $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
     # Actualizar los repositorios nuevamente
     sudo apt-get update
-    
+
     # Instalar Docker
     sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-    
-    # Agregar el usuario actual al grupo docker para no usar sudo
+
+    # Crear el grupo docker si no existe
+    sudo groupadd docker || true
+
+    # Agregar el usuario actual al grupo docker
     sudo usermod -aG docker $USER
-    
-    echo "Docker instalado correctamente. Por favor, cierra sesión y vuelve a iniciar sesión para que los cambios surtan efecto."
-    echo "Después de reiniciar sesión, ejecuta este script nuevamente."
+
+    # Iniciar el servicio de Docker
+    sudo systemctl start docker
+    sudo systemctl enable docker
+
+    echo "Docker instalado correctamente."
+    echo "Por favor, ejecuta los siguientes comandos manualmente:"
+    echo "1. newgrp docker"
+    echo "2. ./deploy.sh"
     exit 0
 fi
 

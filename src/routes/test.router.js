@@ -18,10 +18,8 @@ router.get('/', async (req, res, next) => {
     // Ejecutamos una consulta simple para verificar conexión a la base de datos
     // Le puse un alias "test" con un valor fijo (p.ej. 2) para que rows[0].test exista
     const [rows] = await pool.query(`
-      SELECT 2 AS test, Codigo, Nombre, FechaAlta
-      FROM clientes
-      ORDER BY FechaAlta DESC
-      LIMIT 10
+ SELECT * FROM usuario_app_felman;
+
     `);
 
     res.json({
