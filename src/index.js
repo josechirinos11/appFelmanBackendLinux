@@ -7,6 +7,7 @@ const clientesRoutes = require('./routes/clientes.routes');
 const testRoutes = require('./routes/test.routes');
 const errorHandler = require('./middleware/errorHandler');
 const testRouter = require('./routes/test.router');
+const webhookRoutes = require('./routes/webhook.routes');
 
 
 const app = express();
@@ -23,6 +24,7 @@ app.use('/auth', authRoutes);
 app.use('/clientes', clientesRoutes);
 console.log('Registrando ruta /test');
 app.use('/test', testRouter);
+app.use('/webhook', webhookRoutes);
 // Manejo de errores
 app.use(errors());
 app.use(errorHandler);
@@ -31,4 +33,4 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
-}); 
+});
