@@ -1,32 +1,56 @@
-// Archivo: routes/test.router.js
-require('dotenv').config();
 const express = require('express');
-const pool = require('../config/database');
-
 const router = express.Router();
+const pool = require('../config/database');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
-// Ruta de test: comprueba que el servidor y la BD responden correctamente
-router.get('/', async (req, res, next) => {
-  console.log('Cargando test.router.js');
-      // ① Obtener IP real del cliente
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-
-  // ② Loguear en consola la petición y la IP
-  console.log(`[${new Date().toISOString()}] GET /test desde IP: ${ip}`);
-
+router.post('/login', async (req, res, next) => {
   try {
-    // Ejecutamos una consulta simple para verificar conexión a la base de datos
-    // Le puse un alias "test" con un valor fijo (p.ej. 2) para que rows[0].test exista
-    const [rows] = await pool.query(`
- SELECT * FROM usuario_app_felman;
+    const { nombre, password } = req.body;
 
-    `);
+    // Verificar que se proporcionaron credenciales
+    if (!nombre || !password) {
+      return res.status(400).json({ message: 'Nombre y contraseña son requeridos' });
+    }
 
+    // Buscar usuario en la base de datos MySQL
+    const [users] = await pool.query(
+      'SELECT * FROM usuario_app_felman WHERE nombre = ?',
+      [nombre]
+    );
+
+    // Verificar si el usuario existe
+    if (users.length === 0) {
+      return res.status(401).json({ message: 'Credenciales inválidas' });
+    }    const user = users[0];
+
+    // Verificar la contraseña directamente
+    if (password !== user.contraseña) {
+      return res.status(401).json({ message: 'Credenciales inválidas' });
+    }
+
+    // Generar token JWT
+    const token = jwt.sign(
+      { 
+        id: user.id,
+        nombre: user.nombre,
+        role: user.role 
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    // Enviar respuesta exitosa
     res.json({
-      server: 'online',
-      database: 'connected',
-      testResult: rows  // ahora sí existe y vale 2
+      message: 'Login exitoso',
+      token,
+      user: {
+        id: user.id,
+        nombre: user.nombre,
+        role: user.role
+      }
     });
+
   } catch (error) {
     next(error);
   }
