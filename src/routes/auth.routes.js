@@ -49,7 +49,7 @@ router.post('/login', loginValidation, async (req, res, next) => {
     const { username, password } = req.body;
 
     const [users] = await pool.execute(
-      'SELECT * FROM usuarios WHERE username = ?',
+      'SELECT * FROM usuario_app_felman WHERE username = ?',
       [username]
     );
 
