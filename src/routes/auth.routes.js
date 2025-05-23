@@ -33,7 +33,7 @@ router.post('/register', registerValidation, async (req, res, next) => {
     
 
     const [result] = await pool.execute(
-      'INSERT INTO usuarios (nombre, contraseña) VALUES (?, ?, ?)',
+      'INSERT INTO usuario_app_felman (nombre, contraseña) VALUES (?, ?, ?)',
       [username, password]
     );
 
