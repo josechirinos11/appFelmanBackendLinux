@@ -55,5 +55,38 @@ router.post('/login', async (req, res, next) => {
     next(error);
   }
 });
+// Ruta pública de prueba
+router.get('/usuarios', async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+    
+    // Verificar estructura de la tabla clientes
+    const [columns] = await connection.query(`SELECT * FROM usuario_app_felman`);
+
+    // Obtener los últimos 10 clientes creados
+    const [clientes] = await connection.query(`
+      SELECT Codigo, Nombre, FechaAlta
+      FROM clientes 
+      ORDER BY FechaAlta DESC 
+      LIMIT 10
+    `);
+
+    connection.release();
+
+    res.json({
+      status: 'success',
+      message: 'Conexión exitosa a la base de datos',
+      data: {
+         clientes
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+});
 
 module.exports = router;
