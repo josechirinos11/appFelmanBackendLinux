@@ -71,10 +71,10 @@ router.post('/login', loginValidation, async (req, res, next) => {
 
     // Generar token JWT
     const token = jwt.sign(
-      { userId: user.id, nombre: user.nombre, role: user.role },
+      { userId: user.id, nombre: user.nombre, role: user.rol },
       process.env.JWT_SECRET
     );
-    
+
  //  Removemos la contraseña antes de enviar el usuario
     const { contraseña, ...userSinPassword } = user;
        //  Respondemos con token y datos de usuario
