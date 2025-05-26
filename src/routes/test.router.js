@@ -4,7 +4,15 @@ const pool = require('../config/database');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-router.post('/login', async (req, res, next) => {
+
+// Ruta para probar conexión al servidor Felman
+router.post('/test-connection', (req, res) => {
+  // Respondemos con un mensaje fijo
+  res.status(200).send('Conectado Servidor Felman');
+});
+
+
+router.post('/consulta', async (req, res, next) => {
   try {
     const { nombre, password } = req.body;
 
