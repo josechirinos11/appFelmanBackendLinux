@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 
 
 // Ruta para probar conexión al servidor Felman
-router.post('/test-connection', (req, res) => {
+router.get('/test-connection', (req, res) => {
   // Respondemos con un mensaje fijo
   res.status(200).send('Conectado Servidor Felman');
 });
