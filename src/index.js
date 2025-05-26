@@ -7,6 +7,7 @@ const authRoutes = require('./routes/auth.routes');
 const errorHandler = require('./middleware/errorHandler');
 const testRouter = require('./routes/test.router');
 const webhookRoutes = require('./routes/webhook.routes');
+const controlPedidoRoutes = require('./routes/controlPedido.routes.js'); // Asegúrate de importar controlPedidoRoutes
 
 
 const app = express();
@@ -23,7 +24,7 @@ app.use('/webhook', webhookRoutes);// Rutas para el webhook
 app.use('/test', testRouter);
 
 app.use('/auth', authRoutes);
-
+app.use('/control-pedido', controlPedidoRoutes); // Asegúrate de importar controlPedidoRoutes
 
 
 
