@@ -1,19 +1,19 @@
+require('dotenv').config();
 const express = require('express');
-const pool = require('../config/database');
+const fetch   = require('node-fetch');
+const router  = express.Router();
 
-const router = express.Router();
+const PROXY = process.env.PROXY_URL;
 
-router.get('/inicio', async (req, res, next) => {
+router.get('/formularioControlPedido', async (req, res) => {
   try {
-    const [result] = await pool.execute(`
-      SELECT DISTINCT CONCAT(CodigoPresupSerie, '/', CodigoPresupNumero) AS Presupuesto_No
-      FROM z_felman2023.fpresupuestoslineas
-      ORDER BY CodigoPresupNumero DESC
-    `);
-
-    res.status(200).json(result);
-  } catch (error) {
-    next(error);
+    const response = await fetch(PROXY);
+    if (!response.ok) throw new Error(response.statusText);
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error('Error consumiendo el proxy:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
