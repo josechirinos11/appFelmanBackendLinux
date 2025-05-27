@@ -3,6 +3,7 @@ const { celebrate, Joi, Segments } = require('celebrate');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
+const authMiddleware = require('../middleware/auth.middleware'); // Asegúrate de importar el middleware
 
 const router = express.Router();
 
@@ -84,6 +85,28 @@ router.post('/login', loginValidation, async (req, res, next) => {
     });
 
 
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Ruta protegida para validar token y devolver info de usuario
+router.get('/me', authMiddleware, async (req, res, next) => {
+  try {
+    // req.user viene del middleware, contiene los datos del token
+    const { userId } = req.user;
+
+    // Buscar usuario en la base de datos
+    const [users] = await pool.execute(
+      'SELECT id, nombre, rol FROM usuario_app_felman WHERE id = ?',
+      [userId]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ message: 'Usuario no encontrado' });
+    }
+
+    res.json({ user: users[0] });
   } catch (error) {
     next(error);
   }
