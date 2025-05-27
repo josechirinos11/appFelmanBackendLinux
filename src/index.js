@@ -8,7 +8,7 @@ const errorHandler = require('./middleware/errorHandler');
 const testRouter = require('./routes/test.router');
 const webhookRoutes = require('./routes/webhook.routes');
 const controlPedidoRoutes = require('./routes/controlPedido.routes.js'); // Asegúrate de importar controlPedidoRoutes
-
+const controlAccessRoutes = require('./routes/controlAccess.routes.js'); // Asegúrate de importar controlPedidoRoutes
 
 const app = express();
 
@@ -27,7 +27,7 @@ app.use('/auth', authRoutes);
 app.use('/control-pedido', controlPedidoRoutes); // Asegúrate de importar controlPedidoRoutes
 
 
-
+app.use('/control-access', controlAccessRoutes); // Asegúrate de importar controlPedidoRoutes
 
 // Manejo de errores
 app.use(errors());
