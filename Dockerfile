@@ -1,12 +1,7 @@
 FROM node:18-alpine
 
 # Instalar dependencias ODBC y mdbtools en Alpine
-RUN apk add --no-cache \
-    unixodbc-dev \
-    g++ \
-    make \
-    mdbtools \
-    odbc-mdbtools
+
 
 # Directorio de trabajo
 WORKDIR /app
