@@ -1,26 +1,19 @@
-require('dotenv').config();
 const express = require('express');
-const fetch   = require('node-fetch');
-const router  = express.Router();
+const pool = require('../config/database');
 
-const PROXY = process.env.PROXY_URL;
+const router = express.Router();
 
-// GET /control-access/formularioControlPedido
-router.get('/formularioControlPedido', async (req, res) => {
+router.get('/inicio', async (req, res, next) => {
   try {
-    const sql = `SELECT
-      [BPedidos]![Ejercicio] & '-' & [BPedidos]![Serie] & '-' & [BPedidos]![NPedido] AS NºPedido,
-      AEstadosPedido.Estado AS EstadoPedido,
-      BPedidos.Incidencia,
-      BPedidos.FechaCompromiso AS Compromiso
-    FROM BPedidos
-    LEFT JOIN AEstadosPedido ON BPedidos.Id_EstadoPedido = AEstadosPedido.Id_EstadoPedido`; // ajusta joins si hay más tablas involucradas
+    const [result] = await pool.execute(`
+      SELECT DISTINCT CONCAT(CodigoPresupSerie, '/', CodigoPresupNumero) AS Presupuesto_No
+      FROM z_felman2023.fpresupuestoslineas
+      ORDER BY CodigoPresupNumero DESC
+    `);
 
-    const resultados = await connection.query(sql);
-    res.json(resultados);
+    res.status(200).json(result);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
