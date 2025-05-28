@@ -8,7 +8,7 @@ const router  = express.Router();
 const PROXY = process.env.PROXY_URL;
 
 
-router.get('/formularioControlPedido', async (req, res) => {
+router.get('/pedidos', async (req, res) => {
   try {
     const response = await fetch('http://192.168.1.81:3001/api/pedidos');
     const data = await response.json();
