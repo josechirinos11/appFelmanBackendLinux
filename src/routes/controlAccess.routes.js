@@ -42,4 +42,17 @@ router.get('/incidencia', async (req, res) => {
   }
 });
 
+
+
+router.get('/pedidosComerciales', async (req, res) => {
+  try {
+    const response = await fetch('http://192.168.1.81:3001/api/pedidosComerciales');
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+   console.error('Error consumiendo el proxy:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
