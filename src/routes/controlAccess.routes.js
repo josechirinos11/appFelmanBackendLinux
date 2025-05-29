@@ -12,6 +12,7 @@ router.get('/pedidos', async (req, res) => {
   try {
     const response = await fetch('http://192.168.1.81:3001/api/pedidos');
     const data = await response.json();
+     console.log('Datos recibidos ACCESS formularioControlPedido');
     res.json(data);
   } catch (err) {
    console.error('Error consumiendo el proxy:', err);
@@ -23,6 +24,20 @@ router.get('/ConsultaControlPedidoInicio', async (req, res) => {
   try {
     const response = await fetch('http://192.168.1.81:3001/api/controlPedidoInicio');
     const data = await response.json();
+    console.log('Datos recibidos ACCESS ConsultaControlPedidoInicio');
+    res.json(data);
+  } catch (err) {
+   console.error('Error consumiendo el proxy:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+router.get('/controlEntregaDiaria', async (req, res) => {
+  try {
+    const response = await fetch('http://192.168.1.81:3001/api/controlEntregaDiaria');
+    const data = await response.json();
+    console.log('Datos recibidos ACCESS controlEntregaDiariaaaaaaaaaaaaaaaaaaaaaaaa');
     res.json(data);
   } catch (err) {
    console.error('Error consumiendo el proxy:', err);
