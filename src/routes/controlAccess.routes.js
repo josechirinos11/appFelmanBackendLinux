@@ -12,7 +12,7 @@ router.get('/pedidos', async (req, res) => {
   try {
     const response = await fetch('http://192.168.1.81:3001/api/pedidos');
     const data = await response.json();
-     console.log('Datos recibidos ACCESS formularioControlPedido');
+     console.log('Datos recibidos ACCESS pedidos');
     res.json(data);
   } catch (err) {
    console.error('Error consumiendo el proxy:', err);
