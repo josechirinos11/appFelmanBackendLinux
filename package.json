@@ -2,10 +2,12 @@
   "name": "app-felman-backend",
   "version": "1.0.0",
   "description": "Backend API para sistema Felman",
-  "main": "src/index.js",
-  "scripts": {
+  "main": "src/index.js",  "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "monitor": "node src/monitoreos/start-monitor.js",
+    "start:with-monitor": "concurrently \"npm run start\" \"npm run monitor\"",
+    "dev:with-monitor": "concurrently \"npm run dev\" \"npm run monitor\""
   },
   "dependencies": {
     "axios": "^1.9.0",
@@ -18,8 +20,8 @@
     "mysql2": "^3.6.5",
     "node-fetch": "^2.7.0",
     "openai": "^5.0.1"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.10"
+  },  "devDependencies": {
+    "nodemon": "^3.1.10",
+    "concurrently": "^8.2.2"
   }
 }

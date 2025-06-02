@@ -8,6 +8,7 @@ const testRouter = require('./routes/test.router');
 const webhookRoutes = require('./routes/webhook.routes');
 const controlPedidoRoutes = require('./routes/controlPedido.routes.js');
 const controlAccessRoutes = require('./routes/controlAccess.routes.js');
+const DatabaseMonitor = require('./monitoreos/database-monitor');
 
 const app = express();
 
@@ -33,6 +34,37 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0'; // Permite conexiones desde cualquier IP
 
-app.listen(PORT, HOST, () => {
+// Inicializar el monitor de base de datos
+const dbMonitor = new DatabaseMonitor();
+
+app.listen(PORT, HOST, async () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
+  
+  // Iniciar el monitoreo de base de datos después de 3 segundos
+  console.log('\n🔧 Iniciando sistema de monitoreo de base de datos...');
+  
+  setTimeout(async () => {
+    const connectionOk = await dbMonitor.testConnection();
+    
+    if (connectionOk) {
+      console.log('✅ Monitoreo de base de datos iniciado correctamente');
+      dbMonitor.start();
+    } else {
+      console.log('⚠️  No se pudo iniciar el monitoreo de base de datos');
+      console.log('🔧 Verifica la configuración de la base de datos');
+    }
+  }, 3000);
+});
+
+// Manejar el cierre del servidor para detener el monitoreo
+process.on('SIGINT', () => {
+  console.log('\n📝 Cerrando servidor...');
+  dbMonitor.stop();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n📝 Cerrando servidor...');
+  dbMonitor.stop();
+  process.exit(0);
 });
