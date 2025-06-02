@@ -35,7 +35,7 @@ router.get('/ConsultaControlPedidoInicio', async (req, res) => {
 
 router.get('/controlEntregaDiaria', async (req, res) => {
   try {
-    const response = await fetch('http://192.168.1.81:3001/api/controlEntregaDiaria');
+    const response = await fetch('http://192.168.1.81:3001/api/controlEntregaDiariaA1DIA');
     const data = await response.json();
     console.log('Datos recibidos ACCESS controlEntregaDiariaaaaaaaaaaaaaaaaaaaaaaaa');
     res.json(data);
