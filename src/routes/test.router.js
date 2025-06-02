@@ -11,6 +11,12 @@ router.get('/test-connection', (req, res) => {
  res.json({ message: 'Conectado Servidor Felman' });
 });
 
+// Ruta para probar conexión al servidor Access
+router.get('/test-access', (req, res) => {
+  // Respondemos con un mensaje fijo
+  res.json({ message: 'Conectado Servidor Access' });
+});
+
 
 router.post('/consulta', async (req, res, next) => {
   try {
