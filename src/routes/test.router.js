@@ -8,6 +8,7 @@ const fetch = require('node-fetch');
 
 // Ruta para probar conexión al servidor Felman
 router.get('/test-connection', (req, res) => {
+  console.log('📣 LLEGÓ UNA PETICIÓN A /test/test-access'); // <— agrega esto para depurar
   // Respondemos con un mensaje fijo
  res.json({ message: 'Conectado Servidor Felman' });
 });
