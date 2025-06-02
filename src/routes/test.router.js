@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../config/database');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fetch = require('node-fetch');
 
 
 // Ruta para probar conexión al servidor Felman
@@ -12,9 +13,15 @@ router.get('/test-connection', (req, res) => {
 });
 
 // Ruta para probar conexión al servidor Access
-router.get('/test-access', (req, res) => {
-  // Respondemos con un mensaje fijo
-  res.json({ message: 'Conectado Servidor Access' });
+router.get('/test-access', async (req, res) => {
+  try {
+    const response = await fetch('http://192.168.1.81:3001/api/test-access');
+    const data = await response.text();
+    res.json({ message: data });
+  } catch (err) {
+    console.error('Error consumiendo el proxy:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 
