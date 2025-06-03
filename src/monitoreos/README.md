@@ -1,20 +1,20 @@
-# 🔍 Sistema de Monitoreo DUAL de Base de Datos - Felman
+# 🔍 Sistema de Monitoreo TRIPLE de Base de Datos - Felman
 
-Sistema automatizado para monitorear cambios en presupuestos de la base de datos MySQL con **DOBLE DETECCIÓN**.
+Sistema automatizado para monitorear cambios en presupuestos de la base de datos MySQL con **TRIPLE DETECCIÓN**.
 
 ## 📋 Características Principales
 
-- **Monitoreo DUAL en tiempo real** de la tabla `fpresupuestos`
-- **Detección simultánea** de cambios en columnas `Numero` y `PresupsOrigen`
+- **Monitoreo TRIPLE en tiempo real** de la tabla `fpresupuestos`
+- **Detección simultánea** de cambios en columnas `Numero`, `PresupsOrigen` y `NumeroManual`
 - **Análisis de prioridad** para determinar qué columna se actualiza primero
 - **Estado persistente** que se mantiene durante la ejecución
-- **Información detallada** de cada cambio detectado
+- **Información detallada** de cada cambio detectado incluyendo múltiples fechas
 - **Ejecución automática** junto con el servidor principal
 - **Manejo de valores null** mostrados como "null"
 
 ## 🎯 Campos Monitoreados
 
-El sistema monitorea **DOS COLUMNAS** simultáneamente:
+El sistema monitorea **TRES COLUMNAS** simultáneamente:
 
 ### 🔢 Monitoreo por NÚMERO
 - Detecta nuevos valores únicos en la columna `Numero`
@@ -24,44 +24,55 @@ El sistema monitorea **DOS COLUMNAS** simultáneamente:
 - Detecta nuevos valores únicos en la columna `PresupsOrigen`
 - Rastrea cada valor de origen nuevo que aparece en la tabla
 
+### 📝 Monitoreo por NÚMERO MANUAL
+- Detecta nuevos valores únicos en la columna `NumeroManual`
+- Rastrea cada número manual nuevo que aparece en la tabla
+
 ### 📋 Información Mostrada para Cada Cambio
 - **Serie**: Serie del presupuesto
 - **Numero**: Número único del presupuesto  
 - **PresupsOrigen**: Presupuesto de origen (null si no existe)
+- **NumeroManual**: Número manual del presupuesto (null si no existe)
 - **ClienteNombre**: Nombre del cliente
 - **NombreUsuario**: Usuario que modificó el presupuesto
 - **FechaModificacion**: Fecha y hora de la última modificación
-- **UpdateType**: Tipo de actualización (NUMERO o PRESUP_ORIGEN)
+- **FechaCreacion**: Fecha de creación del presupuesto
+- **FechaMod**: Fecha de modificación alternativa
+- **ExpTerminalesFecha**: Fecha de expiración de terminales
+- **UpdateType**: Tipo de actualización (NUMERO, PRESUPS_ORIGEN o NUMERO_MANUAL)
 
 ## 🏁 Análisis de Prioridad
 
 El sistema determina automáticamente qué columna se actualiza primero:
 
 - **🥇 Solo NÚMERO**: Cuando únicamente cambia la columna `Numero`
-- **🥇 Solo PRESUPS ORIGEN**: Cuando únicamente cambia la columna `PresupsOrigen`  
-- **⚡ AMBAS COLUMNAS**: Cuando ambas columnas cambian en el mismo ciclo de monitoreo
+- **🥇 Solo PRESUPS ORIGEN**: Cuando únicamente cambia la columna `PresupsOrigen`
+- **🥇 Solo NUMERO MANUAL**: Cuando únicamente cambia la columna `NumeroManual`  
+- **⚡ MÚLTIPLES COLUMNAS**: Cuando varias columnas cambian en el mismo ciclo de monitoreo
 
 ## Archivos
 
 ### `database-monitor.js`
-Clase principal que maneja la lógica del monitoreo dual:
-- Mantiene estado separado para ambas columnas (`Numero` y `PresupsOrigen`)
-- Compara registros actuales vs anteriores en ambas columnas
+Clase principal que maneja la lógica del monitoreo triple:
+- Mantiene estado separado para las tres columnas (`Numero`, `PresupsOrigen` y `NumeroManual`)
+- Compara registros actuales vs anteriores en las tres columnas
 - Analiza prioridad de actualizaciones
-- Formatea la salida para mejor legibilidad
+- Formatea la salida para mejor legibilidad con múltiples fechas
+- Maneja errores de conexión
+- Procesa valores null correctamente
 - Maneja errores de conexión
 - Procesa valores null correctamente
 
 ### `start-monitor.js`
 Script ejecutable que:
-- Inicializa el monitor dual
+- Inicializa el monitor triple
 - Verifica la conexión a BD
 - Maneja señales de terminación (Ctrl+C)
 - Proporciona interfaz de usuario
 
 ## Uso
 
-### Ejecutar el monitoreo dual
+### Ejecutar el monitoreo triple
 ```bash
 # Desde la raíz del proyecto
 node src/monitoreos/start-monitor.js
@@ -73,7 +84,7 @@ node src/monitoreos/start-monitor.js
 const DatabaseMonitor = require('./monitoreos/database-monitor');
 const monitor = new DatabaseMonitor();
 
-// Iniciar monitoreo dual junto con el servidor
+// Iniciar monitoreo triple junto con el servidor
 setTimeout(() => {
   monitor.start();
 }, 3000); // Esperar 3 segundos después del inicio del servidor
@@ -81,7 +92,7 @@ setTimeout(() => {
 
 ### Detener el monitoreo
 - Presiona `Ctrl+C` en la terminal
-- El sistema hará una parada elegante y limpiará ambos conjuntos de estado
+- El sistema hará una parada elegante y limpiará los tres conjuntos de estado
 
 ## 📊 Salida del Sistema
 
