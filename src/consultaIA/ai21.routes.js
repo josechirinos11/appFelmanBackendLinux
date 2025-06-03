@@ -75,6 +75,24 @@ router.post('/generar-sql-inteligente', async (req, res) => {
 });
 
 /**
+ * @route POST /ai21/ejecutar-sql
+ * @desc Ejecutar SQL ya generado por AI21
+ * @body { sql: string, consultaOriginal?: string }
+ */
+router.post('/ejecutar-sql', async (req, res) => {
+  await ai21Controller.ejecutarSQLGenerado(req, res);
+});
+
+/**
+ * @route POST /ai21/consulta-completa
+ * @desc Generar y ejecutar SQL en una sola operación
+ * @body { textoUsuario: string, instruccionesPersonalizadas?: string }
+ */
+router.post('/consulta-completa', async (req, res) => {
+  await ai21Controller.generarYEjecutarSQL(req, res);
+});
+
+/**
  * @route GET /ai21/info
  * @desc Información sobre las capacidades del servicio AI21
  */
@@ -114,6 +132,16 @@ router.get('/info', (req, res) => {
         {
           ruta: 'POST /ai21/generar-sql-inteligente',
           descripcion: 'Generar SQL específico para Felman',
+          parametros: ['textoUsuario', 'instruccionesPersonalizadas?']
+        },
+        {
+          ruta: 'POST /ai21/ejecutar-sql',
+          descripcion: 'Ejecutar SQL generado',
+          parametros: ['sql', 'consultaOriginal?']
+        },
+        {
+          ruta: 'POST /ai21/consulta-completa',
+          descripcion: 'Generar y ejecutar SQL',
           parametros: ['textoUsuario', 'instruccionesPersonalizadas?']
         },
         {
