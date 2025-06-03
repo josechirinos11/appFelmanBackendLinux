@@ -228,9 +228,7 @@ Respuesta:`;
       }
 
       console.log('🧠 Generando SQL inteligente específico para Felman...');
-      console.log(`📝 Consulta: "${textoUsuario}"`);
-
-      // Instrucciones base específicas para Felman con toda la información del schema
+      console.log(`📝 Consulta: "${textoUsuario}"`);      // Instrucciones base específicas para Felman con toda la información del schema
       const instruccionesBase = `
 ERES UN ANALISTA DE DATOS EXPERTO EN SQL PARA FELMAN.
 
@@ -240,6 +238,7 @@ INSTRUCCIONES CRÍTICAS:
 3. USA ÚNICAMENTE las tablas y campos que te proporciono
 4. SIEMPRE usa sintaxis MySQL/MariaDB
 5. NO uses caracteres especiales como \\n, \\r, \\t literales
+6. GENERA ÚNICAMENTE UNA CONSULTA SQL, NO MÚLTIPLES
 
 DEFINICIONES ESPECÍFICAS:
 - "línea" o "serie" → fpresupuestoslineas.Serie1Desc
@@ -348,12 +347,11 @@ RESPONDE ÚNICAMENTE CON SQL. NO agregues texto antes o después.
 
       // Generar SQL usando AI21 con configuración muy precisa
       const sqlGenerado = await this.ai21Service.generarTexto(
-        `${instruccionesCompletas}\n\nCONSULTA DEL USUARIO: ${textoUsuario}\n\nSQL:`,
-        {
+        `${instruccionesCompletas}\n\nCONSULTA DEL USUARIO: ${textoUsuario}\n\nSQL:`,        {
           max_tokens: 500,
           temperature: 0.1, // Muy baja para máxima precisión
           top_p: 0.9,
-          stop: [';', '\n\n', 'EXPLAIN:', 'Explicación:']
+          stop: ['\n\n', 'EXPLAIN:', 'Explicación:', 'SELECT fpresupuestoslineas', 'SELECT\nfpresupuestoslineas']
         }
       );
 
@@ -382,12 +380,12 @@ RESPONDE ÚNICAMENTE CON SQL. NO agregues texto antes o después.
       });
     }
   }
-
   /**
    * Limpiar SQL generado eliminando caracteres problemáticos
+   * y manejando múltiples consultas (toma solo la primera)
    */
   limpiarSQL(sql) {
-    return sql
+    let sqlLimpio = sql
       .replace(/```sql/gi, '')
       .replace(/```/g, '')
       .replace(/\\n/g, ' ')
@@ -395,8 +393,18 @@ RESPONDE ÚNICAMENTE CON SQL. NO agregues texto antes o después.
       .replace(/\\t/g, ' ')
       .replace(/[\u0000-\u001F]/g, ' ')
       .replace(/\s+/g, ' ')
-      .trim()
-      .replace(/;$/, '') + ';';
+      .trim();
+
+    // Si hay múltiples consultas separadas por punto y coma, tomar solo la primera
+    const consultas = sqlLimpio.split(';').filter(q => q.trim().length > 0);
+    
+    if (consultas.length > 1) {
+      console.log(`⚠️ Se detectaron ${consultas.length} consultas. Ejecutando solo la primera.`);
+      sqlLimpio = consultas[0].trim();
+    }
+
+    // Asegurar que termine con punto y coma
+    return sqlLimpio.replace(/;$/, '') + ';';
   }
 
   /**
@@ -582,8 +590,9 @@ RESPONDE ÚNICAMENTE CON SQL. NO agregues texto antes o después.
   /**
    * Proceso completo: Generar SQL con AI21 y ejecutarlo en una sola llamada
    * Este endpoint combina la generación de SQL con su ejecución inmediata
-   */
-  async generarYEjecutarSQL(req, res) {
+   */  async generarYEjecutarSQL(req, res) {
+    let sqlGenerado = 'No generado'; // Declarar fuera para que esté disponible en catch
+    
     try {
       const { textoUsuario, instruccionesPersonalizadas } = req.body;
 
@@ -595,7 +604,9 @@ RESPONDE ÚNICAMENTE CON SQL. NO agregues texto antes o después.
       }
 
       console.log('🚀 Proceso completo: Generar + Ejecutar SQL');
-      console.log('💬 Consulta del usuario:', textoUsuario);      // PASO 1: Generar SQL con AI21
+      console.log('💬 Consulta del usuario:', textoUsuario);
+
+      // PASO 1: Generar SQL con AI21
       console.log('📝 Paso 1: Generando SQL con AI21...');
       
       // Construir el prompt usando la misma lógica que generarSQLInteligente
@@ -608,6 +619,7 @@ INSTRUCCIONES CRÍTICAS:
 3. USA ÚNICAMENTE las tablas y campos que te proporciono
 4. SIEMPRE usa sintaxis MySQL/MariaDB
 5. NO uses caracteres especiales como \\n, \\r, \\t literales
+6. GENERA ÚNICAMENTE UNA CONSULTA SQL, NO MÚLTIPLES
 
 DEFINICIONES ESPECÍFICAS:
 - "línea" o "serie" → fpresupuestoslineas.Serie1Desc
@@ -643,6 +655,8 @@ RELACIONES:
 INSTRUCCIÓN CRÍTICA:
 - Siempre que la consulta involucre presupuestos o líneas de presupuestos, INCLUYE SIEMPRE los campos CodigoCliente, Serie y Numero de la tabla fpresupuestos en el SELECT.
 
+IMPORTANTE: GENERA ÚNICAMENTE UNA CONSULTA SQL, NO MÚLTIPLES CONSULTAS SEPARADAS POR PUNTO Y COMA.
+
 RESPONDE ÚNICAMENTE CON SQL. NO agregues texto antes o después.
 `;
 
@@ -651,13 +665,13 @@ RESPONDE ÚNICAMENTE CON SQL. NO agregues texto antes o después.
         ? `${instruccionesBase}\n\nINSTRUCCIONES ADICIONALES:\n${instruccionesPersonalizadas}`
         : instruccionesBase;
 
-      const sqlGenerado = await this.ai21Service.generarTexto(
+      sqlGenerado = await this.ai21Service.generarTexto(
         `${instruccionesCompletas}\n\nCONSULTA DEL USUARIO: ${textoUsuario}\n\nSQL:`,
         {
           max_tokens: 500,
           temperature: 0.1,
           top_p: 0.9,
-          stop: [';', '\n\n', 'EXPLAIN:', 'Explicación:']
+          stop: ['\n\n', 'EXPLAIN:', 'Explicación:', 'SELECT fpresupuestoslineas', 'SELECT\nfpresupuestoslineas']
         }
       );
 
