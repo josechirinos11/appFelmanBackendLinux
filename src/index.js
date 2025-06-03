@@ -8,6 +8,7 @@ const testRouter = require('./routes/test.router');
 const webhookRoutes = require('./routes/webhook.routes');
 const controlPedidoRoutes = require('./routes/controlPedido.routes.js');
 const controlAccessRoutes = require('./routes/controlAccess.routes.js');
+const { ai21Routes } = require('./consultaIA');
 const DatabaseMonitor = require('./monitoreos/database-monitor');
 
 const app = express();
@@ -26,6 +27,7 @@ app.use('/test', testRouter);
 app.use('/auth', authRoutes);
 app.use('/control-pedido', controlPedidoRoutes);
 app.use('/control-access', controlAccessRoutes);
+app.use('/ai21', ai21Routes); // Rutas para AI21 Studio
 
 // Manejo de errores
 app.use(errors());
