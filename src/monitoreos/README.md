@@ -1,36 +1,46 @@
-# 🔍 Sistema de Monitoreo TRIPLE de Base de Datos - Felman
+# 🔍 Sistema de Monitoreo DUAL de Base de Datos - Felman
 
-Sistema automatizado para monitorear cambios en presupuestos de la base de datos MySQL con **TRIPLE DETECCIÓN**.
+Sistema automatizado para monitorear cambios en presupuestos de la base de datos MySQL con **MONITOREO DUAL DE DOS TABLAS**.
 
 ## 📋 Características Principales
 
-- **Monitoreo TRIPLE en tiempo real** de la tabla `fpresupuestos`
-- **Detección simultánea** de cambios en columnas `Numero`, `PresupsOrigen` y `NumeroManual`
-- **Análisis de prioridad** para determinar qué columna se actualiza primero
+- **Monitoreo DUAL en tiempo real** de dos tablas: `presupuestospedidos` y `fpresupuestos`
+- **Detección simultánea** de cambios en campos `presupuestospedidos.CodigoNumero` y `fpresupuestos.Numero`
+- **Análisis de prioridad** para determinar qué tabla se actualiza primero
 - **Estado persistente** que se mantiene durante la ejecución
 - **Información detallada** de cada cambio detectado incluyendo múltiples fechas
 - **Ejecución automática** junto con el servidor principal
 - **Manejo de valores null** mostrados como "null"
 
-## 🎯 Campos Monitoreados
+## 🎯 Tablas y Campos Monitoreados
 
-El sistema monitorea **TRES COLUMNAS** simultáneamente:
+El sistema monitorea **DOS TABLAS** simultáneamente:
 
-### 🔢 Monitoreo por NÚMERO
-- Detecta nuevos valores únicos en la columna `Numero`
-- Rastrea cada número nuevo que aparece en la tabla
+### 📋 Tabla PRESUPUESTOSPEDIDOS
+- **Campo monitoreado**: `CodigoNumero`
+- Detecta nuevos códigos únicos que aparecen en esta tabla
+- Rastrea cada código nuevo en tiempo real
 
-### 📊 Monitoreo por PRESUP ORIGEN  
-- Detecta nuevos valores únicos en la columna `PresupsOrigen`
-- Rastrea cada valor de origen nuevo que aparece en la tabla
+### 📊 Tabla FPRESUPUESTOS
+- **Campo monitoreado**: `Numero`
+- Detecta nuevos números únicos que aparecen en esta tabla
+- Rastrea cada número nuevo en tiempo real
 
-### 📝 Monitoreo por NÚMERO MANUAL
-- Detecta nuevos valores únicos en la columna `NumeroManual`
-- Rastrea cada número manual nuevo que aparece en la tabla
+### 📋 Información Mostrada para Cambios en PRESUPUESTOSPEDIDOS
+- **CodigoNumero**: Código único del registro (CAMPO MONITOREADO)
+- **Serie**: Serie del presupuesto pedido
+- **Numero**: Número del presupuesto pedido
+- **ClienteNombre**: Nombre del cliente
+- **NombreUsuario**: Usuario que modificó el registro
+- **FechaModificacion**: Fecha y hora de la última modificación
+- **FechaCreacion**: Fecha de creación del registro
+- **FechaMod**: Fecha de modificación alternativa
+- **ExpTerminalesFecha**: Fecha de expiración de terminales
+- **UpdateType**: PRESUPUESTOS_PEDIDOS
 
-### 📋 Información Mostrada para Cada Cambio
+### 📊 Información Mostrada para Cambios en FPRESUPUESTOS
 - **Serie**: Serie del presupuesto
-- **Numero**: Número único del presupuesto  
+- **Numero**: Número único del presupuesto (CAMPO MONITOREADO)
 - **PresupsOrigen**: Presupuesto de origen (null si no existe)
 - **NumeroManual**: Número manual del presupuesto (null si no existe)
 - **ClienteNombre**: Nombre del cliente
@@ -39,40 +49,37 @@ El sistema monitorea **TRES COLUMNAS** simultáneamente:
 - **FechaCreacion**: Fecha de creación del presupuesto
 - **FechaMod**: Fecha de modificación alternativa
 - **ExpTerminalesFecha**: Fecha de expiración de terminales
-- **UpdateType**: Tipo de actualización (NUMERO, PRESUPS_ORIGEN o NUMERO_MANUAL)
+- **UpdateType**: FPRESUPUESTOS
 
 ## 🏁 Análisis de Prioridad
 
-El sistema determina automáticamente qué columna se actualiza primero:
+El sistema determina automáticamente qué tabla se actualiza primero:
 
-- **🥇 Solo NÚMERO**: Cuando únicamente cambia la columna `Numero`
-- **🥇 Solo PRESUPS ORIGEN**: Cuando únicamente cambia la columna `PresupsOrigen`
-- **🥇 Solo NUMERO MANUAL**: Cuando únicamente cambia la columna `NumeroManual`  
-- **⚡ MÚLTIPLES COLUMNAS**: Cuando varias columnas cambian en el mismo ciclo de monitoreo
+- **🥇 Solo PRESUPUESTOSPEDIDOS**: Cuando únicamente se detectan cambios en la tabla `presupuestospedidos`
+- **🥇 Solo FPRESUPUESTOS**: Cuando únicamente se detectan cambios en la tabla `fpresupuestos`
+- **⚡ AMBAS TABLAS**: Cuando ambas tablas tienen cambios en el mismo ciclo de monitoreo
 
-## Archivos
+## 📁 Archivos del Sistema
 
 ### `database-monitor.js`
-Clase principal que maneja la lógica del monitoreo triple:
-- Mantiene estado separado para las tres columnas (`Numero`, `PresupsOrigen` y `NumeroManual`)
-- Compara registros actuales vs anteriores en las tres columnas
-- Analiza prioridad de actualizaciones
+Clase principal que maneja la lógica del monitoreo dual:
+- Mantiene estado separado para dos tablas (`presupuestospedidos` y `fpresupuestos`)
+- Compara registros actuales vs anteriores en ambas tablas
+- Analiza prioridad de actualizaciones entre tablas
 - Formatea la salida para mejor legibilidad con múltiples fechas
-- Maneja errores de conexión
-- Procesa valores null correctamente
 - Maneja errores de conexión
 - Procesa valores null correctamente
 
 ### `start-monitor.js`
 Script ejecutable que:
-- Inicializa el monitor triple
-- Verifica la conexión a BD
+- Inicializa el monitor dual
+- Verifica la conexión a BD para ambas tablas
 - Maneja señales de terminación (Ctrl+C)
 - Proporciona interfaz de usuario
 
-## Uso
+## 💻 Uso
 
-### Ejecutar el monitoreo triple
+### Ejecutar el monitoreo dual
 ```bash
 # Desde la raíz del proyecto
 node src/monitoreos/start-monitor.js
@@ -84,7 +91,7 @@ node src/monitoreos/start-monitor.js
 const DatabaseMonitor = require('./monitoreos/database-monitor');
 const monitor = new DatabaseMonitor();
 
-// Iniciar monitoreo triple junto con el servidor
+// Iniciar monitoreo dual junto con el servidor
 setTimeout(() => {
   monitor.start();
 }, 3000); // Esperar 3 segundos después del inicio del servidor
@@ -92,7 +99,7 @@ setTimeout(() => {
 
 ### Detener el monitoreo
 - Presiona `Ctrl+C` en la terminal
-- El sistema hará una parada elegante y limpiará los tres conjuntos de estado
+- El sistema hará una parada elegante y limpiará los dos conjuntos de estado (presupuestospedidos y fpresupuestos)
 
 ## 📊 Salida del Sistema
 
@@ -102,112 +109,129 @@ setTimeout(() => {
 ====================================================
 
 🔌 Probando conexión a la base de datos...
-✅ Conexión exitosa:
-   📋 fpresupuestos: 1248 registros
-   📝 Columnas disponibles: Serie, Numero, PresupsOrigen, ClienteNombre, NombreUsuario, FechaModificacion
+✅ Conexión exitosa a AMBAS TABLAS:
+   📋 presupuestospedidos: 892 registros
+   📊 fpresupuestos: 1248 registros
+   📝 Columnas presupuestospedidos: CodigoNumero, Serie, Numero, ClienteNombre, NombreUsuario, FechaModificacion, FechaCreacion, FechaMod, ExpTerminalesFecha
+   📝 Columnas fpresupuestos: Serie, Numero, PresupsOrigen, NumeroManual, ClienteNombre, NombreUsuario, FechaModificacion, FechaCreacion, FechaMod, ExpTerminalesFecha
 
 🚀 Iniciando monitoreo DUAL de presupuestos cada 5 segundos...
-📊 Tabla monitoreada: fpresupuestos
-🔢 Columnas monitoreadas: Numero + PresupsOrigen
-🎯 Objetivo: Detectar cuál columna se actualiza primero
+📊 Tablas monitoreadas: presupuestospedidos + fpresupuestos
+🔢 Campos monitoreados: presupuestospedidos.CodigoNumero + fpresupuestos.Numero
+🎯 Objetivo: Detectar qué tabla se actualiza primero
 ```
 
 ### Inicialización del estado
 ```
-🔄 Inicializando estado del monitoreo dual...
+🔄 Inicializando estado del monitoreo DUAL (2 TABLAS)...
 ✅ Estado inicial guardado:
-   📊 Números de presupuestos: 1248 valores
-   📋 Valores de PresupsOrigen: 156 valores únicos
-   🔢 Rango de números: 1 - 1248
+   📋 presupuestospedidos.CodigoNumero: 892 valores
+   📊 fpresupuestos.Numero: 1248 valores
+   🔢 Rango presupuestospedidos: 1 - 892
+   🔢 Rango fpresupuestos: 1 - 1248
 ```
 
-### Detección de cambios en NÚMERO
+### Detección de cambios en PRESUPUESTOSPEDIDOS
 ```
-🔍 [03/06/2025 14:30:15] Monitoreando cambios en presupuestos (DUAL: Numero + PresupsOrigen)...
+🔍 [04/06/2025 14:30:15] Monitoreando cambios en presupuestos (DUAL: 2 TABLAS)...
 
-🔢 DETECTADOS 2 NUEVOS NÚMEROS:
-   📝 Números nuevos: 1249, 1250
+📋 DETECTADOS 2 NUEVOS CÓDIGOS EN PRESUPUESTOSPEDIDOS:
+   📝 Códigos nuevos: 893, 894
 
 🎉 CAMBIOS DETECTADOS (2 actualizaciones):
-══════════════════════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════════════════════════════
 
-🔢 ACTUALIZACIONES POR NÚMERO (2):
+📋 ACTUALIZACIONES EN PRESUPUESTOSPEDIDOS (2):
 
-   📋 1. NUEVO NÚMERO DETECTADO:
+   📋 1. NUEVO CÓDIGO EN PRESUPUESTOSPEDIDOS:
+      🔢 Código Número: 893
       🏷️  Serie: A
-      🔢 Número: 1249
-      📊 Presupuesto Origen: null
+      📊 Número: 200
       👤 Cliente: EMPRESA XYZ C.A.
       👨‍💼 Usuario: JOSE.CHIRINOS
-      📅 Fecha Modificación: 03/06/2025 14:30:12
-      🔍 Tipo de Actualización: NUMERO
+      📅 Fecha Modificación: 04/06/2025 14:30:12
+      🗓️  Fecha Creación: 04/06/2025 14:30:12
+      📆 Fecha Mod: 04/06/2025 14:30:12
+      ⏰ Exp Terminales Fecha: null
+      🔍 Tipo de Actualización: PRESUPUESTOS_PEDIDOS
 
 🏁 ANÁLISIS DE PRIORIDAD:
-   🥇 Solo la columna NÚMERO se actualizó en este ciclo
+   🥇 Solo la tabla PRESUPUESTOSPEDIDOS se actualizó en este ciclo
 ```
 
-### Detección de cambios en PRESUP ORIGEN
+### Detección de cambios en FPRESUPUESTOS
 ```
-🔍 [03/06/2025 14:31:20] Monitoreando cambios en presupuestos (DUAL: Numero + PresupsOrigen)...
+🔍 [04/06/2025 14:31:20] Monitoreando cambios en presupuestos (DUAL: 2 TABLAS)...
 
-📊 DETECTADOS 1 NUEVOS VALORES DE PRESUP ORIGEN:
-   📝 Valores nuevos: 1200
+📊 DETECTADOS 1 NUEVOS NÚMEROS EN FPRESUPUESTOS:
+   📝 Números nuevos: 1249
 
 🎉 CAMBIOS DETECTADOS (1 actualizaciones):
-══════════════════════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════════════════════════════
 
-📊 ACTUALIZACIONES POR PRESUP ORIGEN (1):
+📊 ACTUALIZACIONES EN FPRESUPUESTOS (1):
 
-   📋 1. NUEVO PRESUP ORIGEN DETECTADO:
+   📋 1. NUEVO NÚMERO EN FPRESUPUESTOS:
       🏷️  Serie: B
-      🔢 Número: 1251
-      📊 Presupuesto Origen: 1200
+      🔢 Número: 1249
+      📊 Presupuesto Origen: 200
+      📝 Número Manual: M-001
       👤 Cliente: CLIENTE ABC S.A.
       👨‍💼 Usuario: MARIA.LOPEZ
-      📅 Fecha Modificación: 03/06/2025 14:31:18
-      🔍 Tipo de Actualización: PRESUP_ORIGEN
+      📅 Fecha Modificación: 04/06/2025 14:31:18
+      🗓️  Fecha Creación: 04/06/2025 14:31:18
+      📆 Fecha Mod: 04/06/2025 14:31:18
+      ⏰ Exp Terminales Fecha: 04/06/2025 23:59:59
+      🔍 Tipo de Actualización: FPRESUPUESTOS
 
 🏁 ANÁLISIS DE PRIORIDAD:
-   🥇 Solo la columna PRESUP ORIGEN se actualizó en este ciclo
+   🥇 Solo la tabla FPRESUPUESTOS se actualizó en este ciclo
 ```
 
-### Detección de cambios SIMULTÁNEOS
+### Detección de cambios SIMULTÁNEOS en AMBAS TABLAS
 ```
+🔍 [04/06/2025 14:32:25] Monitoreando cambios en presupuestos (DUAL: 2 TABLAS)...
+
+📋 DETECTADOS 1 NUEVOS CÓDIGOS EN PRESUPUESTOSPEDIDOS:
+   📝 Códigos nuevos: 895
+
+📊 DETECTADOS 2 NUEVOS NÚMEROS EN FPRESUPUESTOS:
+   📝 Números nuevos: 1250, 1251
+
 🎉 CAMBIOS DETECTADOS (3 actualizaciones):
-══════════════════════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════════════════════════════
 
-🔢 ACTUALIZACIONES POR NÚMERO (2):
-📊 ACTUALIZACIONES POR PRESUP ORIGEN (1):
+📋 ACTUALIZACIONES EN PRESUPUESTOSPEDIDOS (1):
+
+   📋 1. NUEVO CÓDIGO EN PRESUPUESTOSPEDIDOS:
+      🔢 Código Número: 895
+      ...
+
+📊 ACTUALIZACIONES EN FPRESUPUESTOS (2):
+
+   📋 1. NUEVO NÚMERO EN FPRESUPUESTOS:
+      🏷️  Serie: C
+      🔢 Número: 1250
+      ...
+
+   📋 2. NUEVO NÚMERO EN FPRESUPUESTOS:
+      🏷️  Serie: D
+      🔢 Número: 1251
+      ...
 
 🏁 ANÁLISIS DE PRIORIDAD:
-   ⚡ Se detectaron cambios en AMBAS columnas en este ciclo
-   📈 Número: 2 cambios
-   📈 PresupsOrigen: 1 cambios
-```
-✅ Conexión exitosa:
-   📋 fpresupuestoslineas: 1250 registros
-   📋 fpresupuestos: 320 registros
-
-🚀 Iniciando monitoreo de base de datos cada 5 segundos...
-📊 Tablas monitoreadas: fpresupuestoslineas, fpresupuestos
+   ⚡ Se detectaron cambios en AMBAS TABLAS en este ciclo
+   📈 PRESUPUESTOSPEDIDOS: 1 cambios
+   📈 FPRESUPUESTOS: 2 cambios
 ```
 
-### Durante el monitoreo
+### Sin cambios detectados
 ```
-🔍 [02/06/2025 14:30:15] Monitoreando base de datos...
-   ✅ Sin cambios detectados
-
-🔍 [02/06/2025 14:30:20] Monitoreando base de datos...
-
-🆕 NUEVOS REGISTROS en fpresupuestoslineas (2):
-   1. Presupuesto: A/1001 | Artículo: ART001 | Cantidad: 5 | Precio: 25.50
-   2. Presupuesto: A/1001 | Artículo: ART002 | Cantidad: 2 | Precio: 15.75
-
-🆕 NUEVOS REGISTROS en fpresupuestos (1):
-   1. Presupuesto: A/1001 | Cliente: CLI001 | Fecha: 2025-06-02 | Total: 82.75
+🔍 [04/06/2025 14:33:30] Monitoreando cambios en presupuestos (DUAL: 2 TABLAS)...
+   ✅ Sin cambios detectados en las dos tablas monitoreadas
 ```
 
-## Configuración
+## ⚙️ Configuración
 
 El sistema usa la misma configuración de base de datos del proyecto principal (archivo `.env`):
 
@@ -219,21 +243,24 @@ DB_PASS=consultas
 DB_NAME=z_felman2023
 ```
 
-## Notas técnicas
+## 📋 Notas Técnicas
 
 - **Intervalo**: 5 segundos (configurable en el código)
-- **Método de detección**: Comparación de IDs únicos entre consultas
-- **Memoria**: Mantiene los últimos 5 registros de cada tabla para comparación
+- **Método de detección**: Comparación de conjuntos de valores únicos entre consultas
+- **Memoria**: Mantiene Sets de todos los valores de los campos monitoreados para comparación
 - **Zona horaria**: Configurada para Venezuela (America/Caracas)
 - **Manejo de errores**: Continúa funcionando aunque falle una consulta específica
+- **Campos monitoreados**:
+  - `presupuestospedidos.CodigoNumero` (números únicos)
+  - `fpresupuestos.Numero` (números únicos)
 
-## Integración opcional con el servidor principal
+## 🚀 Integración Opcional con el Servidor Principal
 
-Si deseas que el monitoreo se inicie automáticamente con el servidor, puedes agregar estas líneas al final de `src/index.js`:
+Si deseas que el monitoreo dual se inicie automáticamente con el servidor, puedes agregar estas líneas al final de `src/index.js`:
 
 ```javascript
-// Iniciar monitoreo de base de datos (opcional)
-if (process.env.ENABLE_DB_MONITORING === 'true') {
+// Iniciar monitoreo dual de base de datos (opcional)
+if (process.env.ENABLE_DUAL_DB_MONITORING === 'true') {
   const DatabaseMonitor = require('./monitoreos/database-monitor');
   const dbMonitor = new DatabaseMonitor();
   
@@ -245,5 +272,36 @@ if (process.env.ENABLE_DB_MONITORING === 'true') {
 
 Y agregar en el `.env`:
 ```env
-ENABLE_DB_MONITORING=true
+ENABLE_DUAL_DB_MONITORING=true
 ```
+
+## 🔧 Personalización
+
+### Cambiar el intervalo de monitoreo
+En `database-monitor.js`, línea donde se define `setInterval`:
+```javascript
+// Cambiar de 5000ms (5 segundos) a otro valor
+this.intervalId = setInterval(() => {
+  this.monitorPresupuestos();
+}, 10000); // 10 segundos
+```
+
+### Agregar más campos a monitorear
+Para agregar más campos a las consultas de detalles, modificar los métodos:
+- `getPresupuestoPedidoDetails()` para presupuestospedidos
+- `getPresupuestoDetails()` para fpresupuestos
+
+### Cambiar el formato de salida
+Modificar el método `formatPresupuestoDetails()` para personalizar cómo se muestran los datos.
+
+---
+
+## 📞 Soporte
+
+Para dudas o problemas con el sistema de monitoreo dual, revisar:
+1. Conexión a la base de datos
+2. Permisos del usuario `consultas` en ambas tablas
+3. Existencia de las columnas monitoreadas
+4. Logs de error en la consola
+
+**Última actualización**: Junio 2025 - Sistema Dual (2 Tablas)
