@@ -610,54 +610,27 @@ RESPONDE ÚNICAMENTE CON SQL. NO agregues texto antes o después.
       console.log('📝 Paso 1: Generando SQL con AI21...');
       
       // Construir el prompt usando la misma lógica que generarSQLInteligente
-      const instruccionesBase = `
+      
+const instruccionesBase = `
 ERES UN ANALISTA DE DATOS EXPERTO EN SQL PARA FELMAN.
 
-INSTRUCCIONES CRÍTICAS:
-1. RESPONDE ÚNICAMENTE CON CÓDIGO SQL VÁLIDO
-2. NO agregues explicaciones, comentarios o texto adicional
-3. USA ÚNICAMENTE las tablas y campos que te proporciono
-4. SIEMPRE usa sintaxis MySQL/MariaDB
-5. NO uses caracteres especiales como \\n, \\r, \\t literales
-6. GENERA ÚNICAMENTE UNA CONSULTA SQL, NO MÚLTIPLES
+[INSTRUCCIONES CRÍTICAS]
+1. Responde SOLO con SQL válido; no incluyas explicaciones ni comentarios.
+2. Usa sintaxis MySQL/MariaDB.
+3. Utiliza exclusivamente las tablas y columnas definidas.
+4. Genera UNA sola consulta; evita saltos de línea o caracteres especiales (\n, \r, \t).
+5. Si la consulta involucra presupuestos o líneas, incluye siempre en el SELECT:
+   CodigoCliente, Serie y Numero de fpresupuestos.
 
-DEFINICIONES ESPECÍFICAS:
-- "línea" o "serie" → fpresupuestoslineas.Serie1Desc
-- "número de fabricación" o "fab" → CodigoFabSerie/CodigoFabNumero
-
-ESTRUCTURA EXACTA DE FELMAN:
-
-USAR SIEMPRE las siguientes tablas y columnas:
-TABLA fpresupuestos (PK: Serie, Numero):
-- Serie (char(10)), Numero (int(11)), NumeroManual (char(20))
-- CodigoFabricacionSerie (char(10)), CodigoFabricacionNumero (int(11))
-- PresupsOrigen (char(255)), CodigoCliente (char(20))
-- ClienteNIF (char(20)), ClienteNombre (char(150))
-- ClienteDireccion (char(100)), ClienteCP (char(10))
-- ClienteMunicipio (char(40)), ClienteProvincia (char(40))
-- FechaCreacion (datetime), FechaModificacion (datetime)
-- Estado (int), Aprobado (tinyint), Entregado (tinyint)
-- Facturado (tinyint), Instalado (tinyint), Rechazado (tinyint)
-- Precio (double), Coste (double), Beneficio (double)
-- EnviadoFab (tinyint), FechaAprobado (date), FechaInstalado (date)
-
-TABLA fpresupuestoslineas (PK: CodigoSerie, CodigoNumero, Linea):
-- CodigoSerie (char(10)), CodigoNumero (int(11)), Linea (int(11))
-- CodigoFabSerie (char(10)), CodigoFabNumero (int(11))
-- Serie1Desc (char(150)) - DESCRIPCIÓN DE LA LÍNEA/SERIE
-- Cantidad (double), Precio (double), Coste (double)
-- Fabricadas (double), PenFabricar (double)
-- AuxModulo (char(25)), CodigoModelo (char(20))
-
-RELACIONES:
-- Cabecera-Líneas: fpresupuestos.Serie = fpresupuestoslineas.CodigoSerie AND fpresupuestos.Numero = fpresupuestoslineas.CodigoNumero
-
-INSTRUCCIÓN CRÍTICA:
-- Siempre que la consulta involucre presupuestos o líneas de presupuestos, INCLUYE SIEMPRE los campos CodigoCliente, Serie y Numero de la tabla fpresupuestos en el SELECT.
-
-IMPORTANTE: GENERA ÚNICAMENTE UNA CONSULTA SQL, NO MÚLTIPLES CONSULTAS SEPARADAS POR PUNTO Y COMA.
-
-RESPONDE ÚNICAMENTE CON SQL. NO agregues texto antes o después.
+[TABLAS Y RELACIONES]
+- fpresupuestos (PK: Serie, Numero)
+- fpresupuestoslineas (PK: CodigoSerie, CodigoNumero, Linea)
+- Relación cabecera–líneas:
+    fpresupuestos.Serie = fpresupuestoslineas.CodigoSerie
+    AND fpresupuestos.Numero = fpresupuestoslineas.CodigoNumero
+- Relación fabricación:
+    fpresupuestoslineas.CodigoFabSerie = fpresupuestos.CodigoFabricacionSerie
+    AND fpresupuestoslineas.CodigoFabNumero = fpresupuestos.CodigoFabricacionNumero
 `;
 
       // Combinar instrucciones base con personalizadas si existen
