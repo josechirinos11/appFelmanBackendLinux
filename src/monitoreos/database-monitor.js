@@ -210,7 +210,7 @@ class DatabaseMonitor {
       hour12: false 
     });
 
-    console.log(`\n🔍 [${timestamp}] Monitoreando cambios en presupuestos (DUAL: 2 TABLAS)...`);
+   // console.log(`\n🔍 [${timestamp}] Monitoreando cambios en presupuestos (DUAL: 2 TABLAS)...`);
 
     const results = await this.checkForNewPresupuestos();
     const totalUpdates = results.presupuestosPedidosUpdates.length + results.presupuestosUpdates.length;
@@ -276,7 +276,7 @@ class DatabaseMonitor {
       }
         console.log('\n' + '═'.repeat(100));
     } else {
-      console.log(`   ✅ Sin cambios detectados en las dos tablas monitoreadas`);
+      //console.log(`   ✅ Sin cambios detectados en las dos tablas monitoreadas`);
     }
   }
 
