@@ -9,3 +9,15 @@ http://128.0.0.253:3000/auth/register
 curl -X POST http://128.0.0.253:3000/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"TU_USUARIO","password":"TU_CONTRASEÑA"}'
+
+
+
+  # Consulta de loteslineas para num_manual=2025_40_76
+curl -X GET \
+  "http://85.59.105.234:3000/control-terminales/loteslineas?num_manual=2025_40_76" \
+  -H "Accept: application/json"
+
+# Consulta de lotesfabricaciones para num_manual=2025_40_76 y modulo=V03.01
+curl -X GET \
+  "http://85.59.105.234:3000/control-terminales/lotesfabricaciones?num_manual=2025_40_76&modulo=V03.01" \
+  -H "Accept: application/json"
