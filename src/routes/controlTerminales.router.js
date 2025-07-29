@@ -99,48 +99,45 @@ router.get('/loteslineas', async (req, res) => {
   
   // 3) lotesfabricaciones — sólo CodigoTarea1–10 y tiempos Inicia/Final 1–15
   router.get('/lotesfabricaciones', async (req, res) => {
-    const { num_manual, fabricacionSerie } = req.query;
-    if (!num_manual || !fabricacionSerie) {
-      return res.status(400).json({ status:'error', message:'Falta num_manual y/o fabricacionSerie' });
+    const { num_manual, modulo } = req.query;
+    if (!num_manual || !modulo) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Faltan parámetros num_manual y/o modulo'
+      });
     }
   
-    const sql = `
-      SELECT
-        CodigoTarea1   AS \`Tarea General 1\`,
-        CodigoTarea2   AS \`Tarea General 2\`,
-        CodigoTarea3   AS \`Tarea General 3\`,
-        CodigoTarea4   AS \`Tarea General 4\`,
-        CodigoTarea5   AS \`Tarea General 5\`,
-        CodigoTarea6   AS \`Tarea General 6\`,
-        CodigoTarea7   AS \`Tarea General 7\`,
-        CodigoTarea8   AS \`Tarea General 8\`,
-        CodigoTarea9   AS \`Tarea General 9\`,
-        CodigoTarea10  AS \`Tarea General 10\`,
-        TC1   AS \`Inicia 1\`,  TPO1   AS \`Final 1\`,
-        TC2   AS \`Inicia 2\`,  TPO2   AS \`Final 2\`,
-        TC3   AS \`Inicia 3\`,  TPO3   AS \`Final 3\`,
-        TC4   AS \`Inicia 4\`,  TPO4   AS \`Final 4\`,
-        TC5   AS \`Inicia 5\`,  TPO5   AS \`Final 5\`,
-        TC6   AS \`Inicia 6\`,  TPO6   AS \`Final 6\`,
-        TC7   AS \`Inicia 7\`,  TPO7   AS \`Final 7\`,
-        TC8   AS \`Inicia 8\`,  TPO8   AS \`Final 8\`,
-        TC9   AS \`Inicia 9\`,  TPO9   AS \`Final 9\`,
-        TC10  AS \`Inicia 10\`, TPO10  AS \`Final 10\`,
-        TC11  AS \`Inicia 11\`, TPO11  AS \`Final 11\`,
-        TC12  AS \`Inicia 12\`, TPO12  AS \`Final 12\`,
-        TC13  AS \`Inicia 13\`, TPO13  AS \`Final 13\`,
-        TC14  AS \`Inicia 14\`, TPO14  AS \`Final 14\`,
-        TC15  AS \`Inicia 15\`, TPO15  AS \`Final 15\`
-      FROM terminales.lotesfabricaciones
-      WHERE NumeroManual     = ?
-        AND FabricacionSerie = ?`;
-  
     try {
-      const [rows] = await pool.execute(sql, [num_manual, fabricacionSerie]);
-      res.json(rows);
-    } catch (err) {
-      console.error('❌ /lotesfabricaciones:', err);
-      res.status(500).json({ status:'error', message:err.message });
+      const [rows] = await pool.execute(
+        `SELECT
+           LL.Modulo                                    AS Módulo,
+           LF.CodigoTarea1       AS \`Tarea General 1\`,  LF.TC1  AS \`Inicia 1\`,  LF.TPO1 AS \`Final 1\`,
+           LF.CodigoTarea2       AS \`Tarea General 2\`,  LF.TC2  AS \`Inicia 2\`,  LF.TPO2 AS \`Final 2\`,
+           LF.CodigoTarea3       AS \`Tarea General 3\`,  LF.TC3  AS \`Inicia 3\`,  LF.TPO3 AS \`Final 3\`,
+           LF.CodigoTarea4       AS \`Tarea General 4\`,  LF.TC4  AS \`Inicia 4\`,  LF.TPO4 AS \`Final 4\`,
+           LF.CodigoTarea5       AS \`Tarea General 5\`,  LF.TC5  AS \`Inicia 5\`,  LF.TPO5 AS \`Final 5\`,
+           LF.CodigoTarea6       AS \`Tarea General 6\`,  LF.TC6  AS \`Inicia 6\`,  LF.TPO6 AS \`Final 6\`,
+           LF.CodigoTarea7       AS \`Tarea General 7\`,  LF.TC7  AS \`Inicia 7\`,  LF.TPO7 AS \`Final 7\`,
+           LF.CodigoTarea8       AS \`Tarea General 8\`,  LF.TC8  AS \`Inicia 8\`,  LF.TPO8 AS \`Final 8\`,
+           LF.CodigoTarea9       AS \`Tarea General 9\`,  LF.TC9  AS \`Inicia 9\`,  LF.TPO9 AS \`Final 9\`,
+           LF.CodigoTarea10      AS \`Tarea General 10\`, LF.TC10 AS \`Inicia 10\`, LF.TPO10 AS \`Final 10\`,
+           LF.TC11               AS \`Inicia 11\`,       LF.TPO11 AS \`Final 11\`,
+           LF.TC12               AS \`Inicia 12\`,       LF.TPO12 AS \`Final 12\`,
+           LF.TC13               AS \`Inicia 13\`,       LF.TPO13 AS \`Final 13\`,
+           LF.TC14               AS \`Inicia 14\`,       LF.TPO14 AS \`Final 14\`,
+           LF.TC15               AS \`Inicia 15\`,       LF.TPO15 AS \`Final 15\`
+         FROM terminales.lotesfabricaciones LF
+         JOIN terminales.loteslineas       LL
+           ON LF.NumeroManual     = LL.FabricacionNumeroManual
+          AND LF.FabricacionSerie = LL.FabricacionSerie
+         WHERE LF.NumeroManual = ?
+           AND LL.Modulo       = ?`,
+        [num_manual, modulo]
+      );
+      res.status(200).json(rows);
+    } catch (error) {
+      console.error('❌ ERROR EN /lotesfabricaciones:', error);
+      res.status(500).json({ status:'error', message:error.message });
     }
   });
   
