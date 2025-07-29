@@ -122,7 +122,58 @@ router.get('/lotes', async (req, res) => {
 
 
 
-
+///////////////////////////////////////////////////////////////////////////////////////////////
+// GET /control-terminales/lotes/columns
+router.get('/lotes/columns', async (req, res) => {
+    try {
+      const [cols] = await pool.execute(
+        `SELECT COLUMN_NAME
+         FROM information_schema.columns
+         WHERE table_schema = 'terminales'
+           AND table_name   = 'lotes'
+         ORDER BY ORDINAL_POSITION`
+      );
+      res.status(200).json(cols.map(c => c.COLUMN_NAME));
+    } catch (error) {
+      console.error('❌ ERROR EN /lotes/columns:', error);
+      res.status(500).json({ status: 'error', message: error.message });
+    }
+  });
+  
+  // GET /control-terminales/loteslineas/columns
+  router.get('/loteslineas/columns', async (req, res) => {
+    try {
+      const [cols] = await pool.execute(
+        `SELECT COLUMN_NAME
+         FROM information_schema.columns
+         WHERE table_schema = 'terminales'
+           AND table_name   = 'loteslineas'
+         ORDER BY ORDINAL_POSITION`
+      );
+      res.status(200).json(cols.map(c => c.COLUMN_NAME));
+    } catch (error) {
+      console.error('❌ ERROR EN /loteslineas/columns:', error);
+      res.status(500).json({ status: 'error', message: error.message });
+    }
+  });
+  
+  // GET /control-terminales/lotesfabricaciones/columns
+  router.get('/lotesfabricaciones/columns', async (req, res) => {
+    try {
+      const [cols] = await pool.execute(
+        `SELECT COLUMN_NAME
+         FROM information_schema.columns
+         WHERE table_schema = 'terminales'
+           AND table_name   = 'lotesfabricaciones'
+         ORDER BY ORDINAL_POSITION`
+      );
+      res.status(200).json(cols.map(c => c.COLUMN_NAME));
+    } catch (error) {
+      console.error('❌ ERROR EN /lotesfabricaciones/columns:', error);
+      res.status(500).json({ status: 'error', message: error.message });
+    }
+  });
+  
 
 
 module.exports = router;
