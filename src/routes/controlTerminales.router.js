@@ -23,99 +23,92 @@ router.get('/inicio', async (req, res) => {
 
 
 
-// GET /control-terminales/lotes
+
+
+
+// 1) /lotes → Num. manual, Fabricado, % Comp. y Cargado
 router.get('/lotes', async (req, res) => {
     try {
       const [result] = await pool.execute(
         `SELECT
-           num_manual    AS \`Num. manual\`,
-           fabricado     AS Fabricado,
-           porcentaje    AS \`% Comp.\`,
-           cargado       AS Cargado
+           NumeroManual    AS \`Num. manual\`,
+           Fabricado       AS Fabricado,
+           -- calculamos % completado sobre tiempo total previsto
+           ROUND(TotalTiempo / TotalTiempoPrevisto * 100, 2) AS \`% Comp.\`,
+           TotalUnidades   AS Cargado
          FROM terminales.lotes`
       );
-      res.status(200).json(result);
+      res.json(result);
     } catch (error) {
       console.error('❌ ERROR EN /control-terminales/lotes:', error);
-      res.status(500).json({
-        status: 'error',
-        message: 'Error interno al consultar lotes',
-        detail: error.message,
-      });
+      res.status(500).json({ status:'error', message:error.message });
     }
   });
   
-  // GET /control-terminales/loteslineas?num_manual=12345
+  // 2) /loteslineas?num_manual=… → filtra por NumeroManual y saca módulo + TareaInicio/Final 1–15
   router.get('/loteslineas', async (req, res) => {
     const { num_manual } = req.query;
-    if (!num_manual) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Falta parámetro num_manual',
-      });
-    }
+    if (!num_manual) return res.status(400).json({ status:'error', message:'Falta num_manual' });
   
     try {
       const [result] = await pool.execute(
         `SELECT
-           modulo                           AS Módulo,
-           tarea_general1                   AS \`Tarea General 1\`,
-           tarea_general2                   AS \`Tarea General 2\`,
-           tarea_general3                   AS \`Tarea General 3\`,
+           Modulo                                AS Módulo,
+           TareaInicio01  AS \`Tarea 1 Inicia\`,  TareaFinal01  AS \`Tarea 1 Final\`,
+           TareaInicio02  AS \`Tarea 2 Inicia\`,  TareaFinal02  AS \`Tarea 2 Final\`,
            /* … repite hasta … */
-           tarea_general15                  AS \`Tarea General 15\`,
-           inicia                           AS Inicia,
-           final                            AS Final
+           TareaInicio15  AS \`Tarea 15 Inicia\`, TareaFinal15  AS \`Tarea 15 Final\`
          FROM terminales.loteslineas
-         WHERE num_manual = ?`,
+         WHERE FabricacionNumeroManual = ?`,
         [num_manual]
       );
-      res.status(200).json(result);
+      res.json(result);
     } catch (error) {
       console.error('❌ ERROR EN /control-terminales/loteslineas:', error);
-      res.status(500).json({
-        status: 'error',
-        message: 'Error interno al consultar loteslineas',
-        detail: error.message,
-      });
+      res.status(500).json({ status:'error', message:error.message });
     }
   });
   
-  // GET /control-terminales/lotesfabricaciones?num_manual=12345&modulo=A1
+  // 3) /lotesfabricaciones?num_manual=… (&opcional: fabricacionSerie=…)
+  //    → filtra sólo por NumeroManual (no hay columna “Modulo” en esta tabla)
   router.get('/lotesfabricaciones', async (req, res) => {
-    const { num_manual, modulo } = req.query;
-    if (!num_manual || !modulo) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Faltan parámetros num_manual y/o modulo',
-      });
+    const { num_manual, fabricacionSerie } = req.query;
+    if (!num_manual) return res.status(400).json({ status:'error', message:'Falta num_manual' });
+  
+    // armamos filtro adicional si quieren serie
+    const filters = ['NumeroManual = ?'];
+    const params  = [num_manual];
+    if (fabricacionSerie) {
+      filters.push('FabricacionSerie = ?');
+      params.push(fabricacionSerie);
     }
   
     try {
       const [result] = await pool.execute(
         `SELECT
-           tarea_general1                   AS \`Tarea General 1\`,
-           tarea_general2                   AS \`Tarea General 2\`,
-           tarea_general3                   AS \`Tarea General 3\`,
+           -- aquí, como no hay TareaInicio/Final, sacamos solo códigos y tiempos si quieres
+           CodigoTarea1    AS \`Tarea 1 Código\`,
+           TiempoPrevisto1 AS \`Tarea 1 Previsto\`,
+           TiempoAcumulado1 AS \`Tarea 1 Acum.\`,
            /* … repite hasta … */
-           tarea_general15                  AS \`Tarea General 15\`,
-           inicia                           AS Inicia,
-           final                            AS Final
+           CodigoTarea15   AS \`Tarea 15 Código\`,
+           TiempoPrevisto15 AS \`Tarea 15 Previsto\`,
+           TiempoAcumulado15 AS \`Tarea 15 Acum.\`
          FROM terminales.lotesfabricaciones
-         WHERE num_manual = ?
-           AND modulo    = ?`,
-        [num_manual, modulo]
+         WHERE ${filters.join(' AND ')}`,
+        params
       );
-      res.status(200).json(result);
+      res.json(result);
     } catch (error) {
       console.error('❌ ERROR EN /control-terminales/lotesfabricaciones:', error);
-      res.status(500).json({
-        status: 'error',
-        message: 'Error interno al consultar lotesfabricaciones',
-        detail: error.message,
-      });
+      res.status(500).json({ status:'error', message:error.message });
     }
   });
+
+
+
+
+
   
 
 
