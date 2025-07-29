@@ -10,6 +10,7 @@ const webhookRoutes = require('./routes/webhook.routes');
 const controlPedidoRoutes = require('./routes/controlPedido.routes.js');
 const controlAccessRoutes = require('./routes/controlAccess.routes.js');
 const controlTerminalesRoutes = require('./routes/controlTerminales.router');
+const controlAccessWindowsRoutes = require('./routes/controlAccessWindows.routes.js');
 
 const { ai21Routes } = require('./consultaIA');
 const DatabaseMonitor = require('./monitoreos/database-monitor');
@@ -32,6 +33,7 @@ app.use('/auth', authRoutes);
 app.use('/control-pedido', controlPedidoRoutes);
 app.use('/control-access', controlAccessRoutes);
 app.use('/control-terminales', controlTerminalesRoutes); // Agrega esta línea
+app.use('/control-access-windows', controlAccessWindowsRoutes);
 
 
 app.use('/ai21', ai21Routes); // Rutas para AI21 Studio
