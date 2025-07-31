@@ -1,39 +1,47 @@
-// src/routes/controlAlmacen.router.js
-import express from 'express';
-import { poolAlmacen } from '../config/databaseAlamcen.js';
 
+// src/routes/controlAlmacen.router.js
+const express = require('express');
+const poolAlmacen = require('../config/databaseAlamcen');
 const router = express.Router();
 
-// helper para evitar repetir try/catch
-const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
+// Wrapper para async handlers
+function wrap(fn) {
+  return function(req, res, next) {
+    fn(req, res, next).catch(next);
+  };
+}
 
-// 1. Ruta fija /inicio que siempre funciona
+// Ruta fija /inicio
 router.get('/inicio', wrap(async (req, res) => {
   const [rows] = await poolAlmacen.query('SELECT NOW() AS fecha_servidor');
   res.json({ status: 'ok', data: rows });
 }));
 
-// 2. Registra dinámicamente una ruta por cada tabla existente
-const tablas = (
-  await poolAlmacen.query(
-    'SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = ?',
-    [process.env.DB_NAME_ALMACEN]
-  )
-)[0].map(r => r.TABLE_NAME);
+// Registrar rutas dinámicas según tablas existentes
+(async () => {
+  try {
+    const [results] = await poolAlmacen.query(
+      'SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = ?', 
+      [process.env.DB_NAME_ALMACEN]
+    );
+    const tablas = results.map(r => r.TABLE_NAME);
+    tablas.forEach(tabla => {
+      router.get(`/${tabla}`, wrap(async (req, res) => {
+        const [rows] = await poolAlmacen.query(`SELECT * FROM \`${tabla}\``);
+        res.json({ status: 'ok', data: rows });
+      }));
+    });
+  } catch (err) {
+    console.error('Error al registrar rutas dinámicas:', err);
+  }
+})();
 
-tablas.forEach(tabla => {
-  router.get(`/${tabla}`, wrap(async (req, res) => {
-    const [rows] = await poolAlmacen.query(`SELECT * FROM \`${tabla}\``);
-    res.json({ status: 'ok', data: rows });
-  }));
-});
-
-// 3. Si piden una ruta de tabla que no existe, devolvemos 404
+// Handler 404 para rutas no encontradas
 router.use((req, res) => {
   res.status(404).json({ status: 'error', message: 'Ruta no encontrada' });
 });
 
-// 4. Manejo centralizado de errores
+// Middleware de manejo de errores
 router.use((err, req, res, next) => {
   console.error('❌ Error en control-almacén:', err);
   res.status(500).json({
@@ -43,4 +51,4 @@ router.use((err, req, res, next) => {
   });
 });
 
-export default router;
+module.exports = router;
