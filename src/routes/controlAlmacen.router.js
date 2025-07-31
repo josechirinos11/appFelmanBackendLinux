@@ -1,49 +1,46 @@
 // src/routes/controlAlmacen.router.js
-const express = require('express');
-const pool    = require('../config/databaseAlamcen');
-const router  = express.Router();
+import express from 'express';
+import { poolAlmacen } from '../config/databaseAlamcen.js';
 
-// Middleware para capturar errores de async/await
-function wrap(fn) {
-  return (req, res, next) => fn(req, res, next).catch(next);
-}
+const router = express.Router();
 
-// Ruta de inicio: devuelve la fecha del servidor
+// helper para evitar repetir try/catch
+const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
+
+// 1. Ruta fija /inicio que siempre funciona
 router.get('/inicio', wrap(async (req, res) => {
-  const [rows] = await pool.execute('SELECT NOW() AS fecha_servidor');
+  const [rows] = await poolAlmacen.query('SELECT NOW() AS fecha_servidor');
   res.json({ status: 'ok', data: rows });
 }));
 
-// Tablas que quieres exponer
-const tablas = [
-  'categorias',
-  'ubicaciones',
-  'articulos',
-  'entradas',
-  'salidas',
-  'transferencias',
-  'ajustes',
-  'configuraciones',
-  'pedidos',
-  'pedido_items'
-];
+// 2. Registra dinámicamente una ruta por cada tabla existente
+const tablas = (
+  await poolAlmacen.query(
+    'SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = ?',
+    [process.env.DB_NAME_ALMACEN]
+  )
+)[0].map(r => r.TABLE_NAME);
 
-// Crea una ruta GET /<tabla> para cada tabla
 tablas.forEach(tabla => {
   router.get(`/${tabla}`, wrap(async (req, res) => {
-    const [rows] = await pool.execute(`SELECT * FROM \`${tabla}\``);
+    const [rows] = await poolAlmacen.query(`SELECT * FROM \`${tabla}\``);
     res.json({ status: 'ok', data: rows });
   }));
 });
 
-// Manejo centralizado de errores al final del router
+// 3. Si piden una ruta de tabla que no existe, devolvemos 404
+router.use((req, res) => {
+  res.status(404).json({ status: 'error', message: 'Ruta no encontrada' });
+});
+
+// 4. Manejo centralizado de errores
 router.use((err, req, res, next) => {
-  console.error('💥 ERROR EN CONTROL-ALMACÉN:', err);
+  console.error('❌ Error en control-almacén:', err);
   res.status(500).json({
     status: 'error',
     message: 'Error interno del servidor',
-    detail: err.message
+    detail: err.code || err.message
   });
 });
 
-module.exports = router;
+export default router;
