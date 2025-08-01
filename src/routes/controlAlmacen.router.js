@@ -27,16 +27,31 @@ router.get('/ajustes', async (req, res) => {
   }
 });
 
-// Artículos
+// Rutas CRUD para tabla Artículos
 router.get('/articulos', async (req, res) => {
-  try {
     const [rows] = await poolAlmacen.query('SELECT * FROM articulos');
     res.json({ status: 'ok', data: rows });
-  } catch (error) {
-    console.error('❌ Error en /articulos:', error);
-    res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: error.message });
-  }
-});
+  });
+  
+  router.post('/articuloscrear', async (req, res) => {
+    const { sku, nombre, descripcion, categoria_id, ubicacion_id, precio_costo, precio_venta, stock_minimo, stock_maximo, creado_por } = req.body;
+    await poolAlmacen.query('INSERT INTO articulos (sku, nombre, descripcion, categoria_id, ubicacion_id, precio_costo, precio_venta, stock_minimo, stock_maximo, creado_por, actualizado_por) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [sku, nombre, descripcion, categoria_id, ubicacion_id, precio_costo, precio_venta, stock_minimo, stock_maximo, creado_por, creado_por]);
+    res.json({ status: 'ok', message: 'Artículo creado correctamente' });
+  });
+  
+  router.put('/articulosactualizar/:id', async (req, res) => {
+    const { id } = req.params;
+    const { nombre, descripcion, precio_costo, precio_venta, stock_minimo, stock_maximo, actualizado_por } = req.body;
+    await poolAlmacen.query('UPDATE articulos SET nombre=?, descripcion=?, precio_costo=?, precio_venta=?, stock_minimo=?, stock_maximo=?, actualizado_por=? WHERE id=?', [nombre, descripcion, precio_costo, precio_venta, stock_minimo, stock_maximo, actualizado_por, id]);
+    res.json({ status: 'ok', message: 'Artículo actualizado correctamente' });
+  });
+  
+  router.delete('/articuloseliminar/:id', async (req, res) => {
+    const { id } = req.params;
+    await poolAlmacen.query('DELETE FROM articulos WHERE id=?', [id]);
+    res.json({ status: 'ok', message: 'Artículo eliminado correctamente' });
+  });
+  
 
 // Categorías
 router.get('/categorias', async (req, res) => {
