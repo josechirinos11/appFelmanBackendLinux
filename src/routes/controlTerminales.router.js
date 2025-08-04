@@ -69,6 +69,7 @@ router.get('/loteslineas', async (req, res) => {
   
     const sql = `
       SELECT
+      Fabricada,
         Modulo                                    AS Módulo,
         CodigoTarea01                             AS \`Tarea General 1\`,
         CodigoTarea02                             AS \`Tarea General 2\`,
