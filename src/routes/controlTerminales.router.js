@@ -28,22 +28,37 @@ router.get('/inicio', async (req, res) => {
 
 // 1) /lotes → Num. manual, Fabricado, % Comp. y Cargado
 router.get('/lotes', async (req, res) => {
-    try {
-      const [result] = await pool.execute(
-        `SELECT
-           NumeroManual    AS \`Num. manual\`,
-           Fabricado       AS Fabricado,
-           -- calculamos % completado sobre tiempo total previsto
-           ROUND(TotalTiempo / TotalTiempoPrevisto * 100, 2) AS \`% Comp.\`,
-           TotalUnidades   AS Cargado
-         FROM terminales.lotes`
-      );
-      res.json(result);
-    } catch (error) {
-      console.error('❌ ERROR EN /control-terminales/lotes:', error);
-      res.status(500).json({ status:'error', message:error.message });
-    }
-  });
+  try {
+    const [result] = await pool.execute(`
+      SELECT
+        Fabricado,
+        FabricadoFecha,
+        FechaRealInicio,
+        Descripcion,
+        TotalTiempo,
+        NumeroManual,
+        -- Tareas finales 1–15
+        TareaFinal01,  TareaFinal02,  TareaFinal03,  TareaFinal04,  TareaFinal05,
+        TareaFinal06,  TareaFinal07,  TareaFinal08,  TareaFinal09,  TareaFinal10,
+        TareaFinal11,  TareaFinal12,  TareaFinal13,  TareaFinal14,  TareaFinal15,
+        -- Indicadores de finalización 1–15
+        TareaFinalizada01,  TareaFinalizada02,  TareaFinalizada03,  TareaFinalizada04,  TareaFinalizada05,
+        TareaFinalizada06,  TareaFinalizada07,  TareaFinalizada08,  TareaFinalizada09,  TareaFinalizada10,
+        TareaFinalizada11,  TareaFinalizada12,  TareaFinalizada13,  TareaFinalizada14,  TareaFinalizada15,
+        -- Fechas de inicio de tarea 1–15
+        TareaInicio01,  TareaInicio02,  TareaInicio03,  TareaInicio04,  TareaInicio05,
+        TareaInicio06,  TareaInicio07,  TareaInicio08,  TareaInicio09,  TareaInicio10,
+        TareaInicio11,  TareaInicio12,  TareaInicio13,  TareaInicio14,  TareaInicio15,
+        TotalUnidades
+      FROM terminales.lotes
+    `);
+    res.json(result);
+  } catch (error) {
+    console.error('❌ ERROR EN /control-terminales/lotes:', error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
   
 // src/routes/controlTerminales.router.js
 
