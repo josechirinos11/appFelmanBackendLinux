@@ -31,7 +31,6 @@ router.get('/lotes', async (req, res) => {
   try {
     const [result] = await pool.execute(`
       SELECT
-        Modulo,
         Fabricado,
         FabricadoFecha,
         FechaRealInicio,
