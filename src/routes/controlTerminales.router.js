@@ -1,33 +1,24 @@
-const express = require('express');
-const pool = require('../config/databaseTerminales');
+const express = require("express");
+const pool = require("../config/databaseTerminales");
 
 const router = express.Router();
 
-router.get('/inicio', async (req, res) => {
+router.get("/inicio", async (req, res) => {
   try {
-    const [result] = await pool.execute('SHOW TABLES');
+    const [result] = await pool.execute("SHOW TABLES");
     res.status(200).json(result);
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/inicio:', error);
+    console.error("❌ ERROR EN /control-terminales/inicio:", error);
     res.status(500).json({
-      status: 'error',
-      message: 'Error interno del servidor',
+      status: "error",
+      message: "Error interno del servidor",
       detail: error.message, // Esto te mostrará el error exacto
     });
   }
 });
 
-
-
-
-
-
-
-
-
-
 // 1) /lotes → Num. manual, Fabricado, % Comp. y Cargado
-router.get('/lotes', async (req, res) => {
+router.get("/lotes", async (req, res) => {
   try {
     const [result] = await pool.execute(`
       SELECT
@@ -54,20 +45,22 @@ router.get('/lotes', async (req, res) => {
     `);
     res.json(result);
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/lotes:', error);
-    res.status(500).json({ status: 'error', message: error.message });
+    console.error("❌ ERROR EN /control-terminales/lotes:", error);
+    res.status(500).json({ status: "error", message: error.message });
   }
 });
 
-  
 // src/routes/controlTerminales.router.js
 
 // 2) loteslineas — usando CódigoTarea01–15 y TareaInicio01–15
-router.get('/loteslineas', async (req, res) => {
-    const { num_manual } = req.query;
-    if (!num_manual) return res.status(400).json({ status:'error', message:'Falta num_manual' });
-  
-    const sql = `
+router.get("/loteslineas", async (req, res) => {
+  const { num_manual } = req.query;
+  if (!num_manual)
+    return res
+      .status(400)
+      .json({ status: "error", message: "Falta num_manual" });
+
+  const sql = `
       SELECT
       Fabricada,
         Modulo                                    AS Módulo,
@@ -103,29 +96,29 @@ router.get('/loteslineas', async (req, res) => {
         TareaInicio15   AS \`Inicia 15\`, TareaFinal15   AS \`Final 15\`
       FROM terminales.loteslineas
       WHERE FabricacionNumeroManual = ?`;
-    
-    try {
-      const [rows] = await pool.execute(sql, [num_manual]);
-      res.json(rows);
-    } catch (err) {
-      console.error('❌ /loteslineas:', err);
-      res.status(500).json({ status:'error', message:err.message });
-    }
-  });
-  
-  // 3) lotesfabricaciones — sólo CodigoTarea1–10 y tiempos Inicia/Final 1–15
-  router.get('/lotesfabricaciones', async (req, res) => {
-    const { num_manual, modulo } = req.query;
-    if (!num_manual || !modulo) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Faltan parámetros num_manual y/o modulo'
-      });
-    }
-  
-    try {
-      const [rows] = await pool.execute(
-        `SELECT
+
+  try {
+    const [rows] = await pool.execute(sql, [num_manual]);
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ /loteslineas:", err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+// 3) lotesfabricaciones — sólo CodigoTarea1–10 y tiempos Inicia/Final 1–15
+router.get("/lotesfabricaciones", async (req, res) => {
+  const { num_manual, modulo } = req.query;
+  if (!num_manual || !modulo) {
+    return res.status(400).json({
+      status: "error",
+      message: "Faltan parámetros num_manual y/o modulo",
+    });
+  }
+
+  try {
+    const [rows] = await pool.execute(
+      `SELECT
            LL.Modulo                                    AS Módulo,
            LF.CodigoTarea1       AS \`Tarea General 1\`,  LF.TC1  AS \`Inicia 1\`,  LF.TPO1 AS \`Final 1\`,
            LF.CodigoTarea2       AS \`Tarea General 2\`,  LF.TC2  AS \`Inicia 2\`,  LF.TPO2 AS \`Final 2\`,
@@ -148,79 +141,119 @@ router.get('/loteslineas', async (req, res) => {
           AND LF.FabricacionSerie = LL.FabricacionSerie
          WHERE LF.NumeroManual = ?
            AND LL.Modulo       = ?`,
-        [num_manual, modulo]
-      );
-      res.status(200).json(rows);
-    } catch (error) {
-      console.error('❌ ERROR EN /lotesfabricaciones:', error);
-      res.status(500).json({ status:'error', message:error.message });
-    }
-  });
-  
-  
+      [num_manual, modulo]
+    );
+    res.status(200).json(rows);
+  } catch (error) {
+    console.error("❌ ERROR EN /lotesfabricaciones:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
 
+//tiempo acumulado de las tareas de un lote
+router.get("/tiempos-acumulados", async (req, res) => {
+  const sql = `
+    SELECT Modulo, 1 AS NumeroTarea, TiempoAcumulado01 AS TiempoAcumulado FROM terminales.loteslineas WHERE TiempoAcumulado01 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 2, TiempoAcumulado02 FROM terminales.loteslineas WHERE TiempoAcumulado02 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 3, TiempoAcumulado03 FROM terminales.loteslineas WHERE TiempoAcumulado03 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 4, TiempoAcumulado04 FROM terminales.loteslineas WHERE TiempoAcumulado04 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 5, TiempoAcumulado05 FROM terminales.loteslineas WHERE TiempoAcumulado05 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 6, TiempoAcumulado06 FROM terminales.loteslineas WHERE TiempoAcumulado06 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 7, TiempoAcumulado07 FROM terminales.loteslineas WHERE TiempoAcumulado07 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 8, TiempoAcumulado08 FROM terminales.loteslineas WHERE TiempoAcumulado08 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 9, TiempoAcumulado09 FROM terminales.loteslineas WHERE TiempoAcumulado09 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 10, TiempoAcumulado10 FROM terminales.loteslineas WHERE TiempoAcumulado10 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 11, TiempoAcumulado11 FROM terminales.loteslineas WHERE TiempoAcumulado11 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 12, TiempoAcumulado12 FROM terminales.loteslineas WHERE TiempoAcumulado12 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 13, TiempoAcumulado13 FROM terminales.loteslineas WHERE TiempoAcumulado13 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 14, TiempoAcumulado14 FROM terminales.loteslineas WHERE TiempoAcumulado14 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 15, TiempoAcumulado15 FROM terminales.loteslineas WHERE TiempoAcumulado15 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 16, TiempoAcumulado16 FROM terminales.loteslineas WHERE TiempoAcumulado16 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 17, TiempoAcumulado17 FROM terminales.loteslineas WHERE TiempoAcumulado17 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 18, TiempoAcumulado18 FROM terminales.loteslineas WHERE TiempoAcumulado18 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 19, TiempoAcumulado19 FROM terminales.loteslineas WHERE TiempoAcumulado19 IS NOT NULL
+    UNION ALL
+    SELECT Modulo, 20, TiempoAcumulado20 FROM terminales.loteslineas WHERE TiempoAcumulado20 IS NOT NULL
+    ORDER BY Modulo, NumeroTarea;
+  `;
 
-
-
-
-  
-
-
-
-
+  try {
+    const [rows] = await pool.execute(sql);
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ /loteslineas/tiempos-acumulados:", err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // GET /control-terminales/lotes/columns
-router.get('/lotes/columns', async (req, res) => {
-    try {
-      const [cols] = await pool.execute(
-        `SELECT COLUMN_NAME
+router.get("/lotes/columns", async (req, res) => {
+  try {
+    const [cols] = await pool.execute(
+      `SELECT COLUMN_NAME
          FROM information_schema.columns
          WHERE table_schema = 'terminales'
            AND table_name   = 'lotes'
          ORDER BY ORDINAL_POSITION`
-      );
-      res.status(200).json(cols.map(c => c.COLUMN_NAME));
-    } catch (error) {
-      console.error('❌ ERROR EN /lotes/columns:', error);
-      res.status(500).json({ status: 'error', message: error.message });
-    }
-  });
-  
-  // GET /control-terminales/loteslineas/columns
-  router.get('/loteslineas/columns', async (req, res) => {
-    try {
-      const [cols] = await pool.execute(
-        `SELECT COLUMN_NAME
+    );
+    res.status(200).json(cols.map((c) => c.COLUMN_NAME));
+  } catch (error) {
+    console.error("❌ ERROR EN /lotes/columns:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// GET /control-terminales/loteslineas/columns
+router.get("/loteslineas/columns", async (req, res) => {
+  try {
+    const [cols] = await pool.execute(
+      `SELECT COLUMN_NAME
          FROM information_schema.columns
          WHERE table_schema = 'terminales'
            AND table_name   = 'loteslineas'
          ORDER BY ORDINAL_POSITION`
-      );
-      res.status(200).json(cols.map(c => c.COLUMN_NAME));
-    } catch (error) {
-      console.error('❌ ERROR EN /loteslineas/columns:', error);
-      res.status(500).json({ status: 'error', message: error.message });
-    }
-  });
-  
-  // GET /control-terminales/lotesfabricaciones/columns
-  router.get('/lotesfabricaciones/columns', async (req, res) => {
-    try {
-      const [cols] = await pool.execute(
-        `SELECT COLUMN_NAME
+    );
+    res.status(200).json(cols.map((c) => c.COLUMN_NAME));
+  } catch (error) {
+    console.error("❌ ERROR EN /loteslineas/columns:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// GET /control-terminales/lotesfabricaciones/columns
+router.get("/lotesfabricaciones/columns", async (req, res) => {
+  try {
+    const [cols] = await pool.execute(
+      `SELECT COLUMN_NAME
          FROM information_schema.columns
          WHERE table_schema = 'terminales'
            AND table_name   = 'lotesfabricaciones'
          ORDER BY ORDINAL_POSITION`
-      );
-      res.status(200).json(cols.map(c => c.COLUMN_NAME));
-    } catch (error) {
-      console.error('❌ ERROR EN /lotesfabricaciones/columns:', error);
-      res.status(500).json({ status: 'error', message: error.message });
-    }
-  });
-  
-
+    );
+    res.status(200).json(cols.map((c) => c.COLUMN_NAME));
+  } catch (error) {
+    console.error("❌ ERROR EN /lotesfabricaciones/columns:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
 
 module.exports = router;
