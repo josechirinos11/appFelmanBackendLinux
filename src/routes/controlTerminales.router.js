@@ -216,21 +216,48 @@ router.get("/tiempos-acumulados-modulo", async (req, res) => {
   }
 
   const sql = `
-    SELECT Modulo, 1 AS NumeroTarea, TiempoAcumulado01 AS TiempoAcumulado FROM terminales.loteslineas 
-    WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado01 IS NOT NULL
-    UNION ALL
-    SELECT Modulo, 2, TiempoAcumulado02 FROM terminales.loteslineas 
-    WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado02 IS NOT NULL
-    UNION ALL
-    SELECT Modulo, 3, TiempoAcumulado03 FROM terminales.loteslineas 
-    WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado03 IS NOT NULL
-    UNION ALL
-    ...
-    UNION ALL
-    SELECT Modulo, 20, TiempoAcumulado20 FROM terminales.loteslineas 
-    WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado20 IS NOT NULL
-    ORDER BY NumeroTarea
-  `;
+  SELECT Modulo, 1 AS NumeroTarea, TiempoAcumulado01 AS TiempoAcumulado FROM terminales.loteslineas 
+  WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado01 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 2, TiempoAcumulado02 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado02 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 3, TiempoAcumulado03 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado03 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 4, TiempoAcumulado04 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado04 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 5, TiempoAcumulado05 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado05 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 6, TiempoAcumulado06 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado06 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 7, TiempoAcumulado07 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado07 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 8, TiempoAcumulado08 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado08 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 9, TiempoAcumulado09 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado09 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 10, TiempoAcumulado10 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado10 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 11, TiempoAcumulado11 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado11 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 12, TiempoAcumulado12 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado12 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 13, TiempoAcumulado13 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado13 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 14, TiempoAcumulado14 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado14 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 15, TiempoAcumulado15 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado15 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 16, TiempoAcumulado16 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado16 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 17, TiempoAcumulado17 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado17 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 18, TiempoAcumulado18 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado18 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 19, TiempoAcumulado19 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado19 IS NOT NULL
+  UNION ALL
+  SELECT Modulo, 20, TiempoAcumulado20 FROM terminales.loteslineas WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado20 IS NOT NULL
+  ORDER BY NumeroTarea
+`;
 
   const params = [];
   for (let i = 1; i <= 20; i++) {
