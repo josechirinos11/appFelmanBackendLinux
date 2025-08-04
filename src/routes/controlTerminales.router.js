@@ -205,21 +205,17 @@ router.get("/tiempos-acumulados", async (req, res) => {
 });
 
 // 4timpo acumulado por numero manual y modulo
-router.get(
-  "/control-terminales/tiempos-acumulados-modulo",
-  async (req, res) => {
-    const { num_manual, modulo } = req.query;
+router.get("/tiempos-acumulados-modulo", async (req, res) => {
+  const { num_manual, modulo } = req.query;
 
-    if (!num_manual || !modulo) {
-      return res
-        .status(400)
-        .json({
-          status: "error",
-          message: "Faltan parámetros: num_manual o modulo",
-        });
-    }
+  if (!num_manual || !modulo) {
+    return res.status(400).json({
+      status: "error",
+      message: "Faltan parámetros: num_manual o modulo",
+    });
+  }
 
-    const sql = `
+  const sql = `
     SELECT Modulo, 1 AS NumeroTarea, TiempoAcumulado01 AS TiempoAcumulado FROM terminales.loteslineas 
     WHERE FabricacionNumeroManual = ? AND Modulo = ? AND TiempoAcumulado01 IS NOT NULL
     UNION ALL
@@ -236,20 +232,19 @@ router.get(
     ORDER BY NumeroTarea
   `;
 
-    const params = [];
-    for (let i = 1; i <= 20; i++) {
-      params.push(num_manual, modulo);
-    }
-
-    try {
-      const [rows] = await pool.execute(sql, params);
-      res.json(rows);
-    } catch (err) {
-      console.error("❌ /control-terminales/tiempos-acumulados:", err);
-      res.status(500).json({ status: "error", message: err.message });
-    }
+  const params = [];
+  for (let i = 1; i <= 20; i++) {
+    params.push(num_manual, modulo);
   }
-);
+
+  try {
+    const [rows] = await pool.execute(sql, params);
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ /control-terminales/tiempos-acumulados:", err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // GET /control-terminales/lotes/columns
