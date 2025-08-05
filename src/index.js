@@ -13,6 +13,8 @@ const controlTerminalesRoutes = require('./routes/controlTerminales.router');
 const controlAlmacenRoutes= require('./routes/controlAlmacen.router.js');
 
 const path = require('path');
+const rootPath = path.join(__dirname, '..');
+
 
 //const controlAccessWindowsRoutes = require('./routes/controlAccessWindows.routes.js');
 
@@ -51,9 +53,9 @@ app.use('/ai21', ai21Routes); // Rutas para AI21 Studio
 // Para rutas SPA (React Native Web)
 // Servir archivos estáticos desde 'dist'
 // ✅ Solo aquí colocas dist y SPA fallback
-app.use('/', express.static(path.join(__dirname, 'dist')));
+app.use('/', express.static(path.join(rootPath, 'dist')));
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  res.sendFile(path.join(rootPath, 'dist', 'index.html'));
 });
 
 
