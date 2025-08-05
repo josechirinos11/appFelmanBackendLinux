@@ -29,8 +29,6 @@ app.use(cors({
 
 app.use(express.json());
 
-// Servir archivos estáticos desde 'dist'
-app.use('/', express.static(path.join(__dirname, 'dist')));
 
 // Rutas
 
@@ -51,6 +49,9 @@ app.use('/ai21', ai21Routes); // Rutas para AI21 Studio
 
 
 // Para rutas SPA (React Native Web)
+// Servir archivos estáticos desde 'dist'
+// ✅ Solo aquí colocas dist y SPA fallback
+app.use('/', express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
