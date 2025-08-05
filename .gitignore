@@ -265,7 +265,7 @@ cache/
 # Archivos de build y distribución
 # ====================================================================
 build/
-dist/
+# dist/
 out/
 target/
 
