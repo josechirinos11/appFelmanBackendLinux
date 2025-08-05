@@ -11,6 +11,9 @@ const controlPedidoRoutes = require('./routes/controlPedido.routes.js');
 const controlAccessRoutes = require('./routes/controlAccess.routes.js');
 const controlTerminalesRoutes = require('./routes/controlTerminales.router');
 const controlAlmacenRoutes= require('./routes/controlAlmacen.router.js');
+
+const path = require('path');
+
 //const controlAccessWindowsRoutes = require('./routes/controlAccessWindows.routes.js');
 
 const { ai21Routes } = require('./consultaIA');
@@ -26,7 +29,11 @@ app.use(cors({
 
 app.use(express.json());
 
+// Servir archivos estáticos desde 'dist'
+app.use('/', express.static(path.join(__dirname, 'dist')));
+
 // Rutas
+
 app.use('/webhook', webhookRoutes);// Rutas para el webhook
 app.use('/test', testRouter);
 app.use('/auth', authRoutes);
@@ -39,6 +46,15 @@ app.use('/control-almacen', controlAlmacenRoutes);
 
 
 app.use('/ai21', ai21Routes); // Rutas para AI21 Studio
+
+
+
+
+// Para rutas SPA (React Native Web)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+});
+
 
 // Manejo de errores
 app.use(errors());
