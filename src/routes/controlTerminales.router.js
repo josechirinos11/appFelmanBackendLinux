@@ -3,6 +3,27 @@ const pool = require("../config/databaseTerminales");
 
 const router = express.Router();
 
+
+router.post("/sql", async (req, res) => {
+  const { query } = req.body;
+  if (!query) {
+    return res.status(400).json({ status: "error", message: "Falta la consulta SQL en el cuerpo" });
+  }
+
+  try {
+    const [rows] = await pool.execute(query);
+    res.status(200).json(rows);
+  } catch (error) {
+    console.error("❌ ERROR EN /sql:", error);
+    res.status(500).json({
+      status: "error",
+      message: "Error al ejecutar la consulta",
+      detail: error.message,
+    });
+  }
+});
+
+
 router.get("/inicio", async (req, res) => {
   try {
     const [result] = await pool.execute("SHOW TABLES");
