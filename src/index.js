@@ -70,6 +70,8 @@ const HOST = '0.0.0.0'; // Permite conexiones desde cualquier IP
 const dbMonitor = new DatabaseMonitor();
 
 app.listen(PORT, HOST, async () => {
+  console.log('🚀 Versión desplegada: 6 de agosto - 15:00');
+
   console.log(`Servidor corriendo en puerto ${PORT}`);
   
   // Iniciar el monitoreo de base de datos después de 3 segundos
