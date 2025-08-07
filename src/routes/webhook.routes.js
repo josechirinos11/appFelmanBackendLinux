@@ -24,17 +24,38 @@ router.post("/webhook", (req, res) => {
 });
 // Endpoint para recibir el webhook y desplegar
 router.post("/backendWindos", async (req, res) => {
+  // Depuración: Registrar la recepción de la solicitud y los datos del cuerpo
+  console.log("📥 Solicitud recibida en /backendWindos");
+  console.log("📦 Cuerpo de la solicitud:", req.body);
+
   try {
-    const response = await fetch("http://192.168.1.81:3001/api/webhook", {
+    // Depuración: Registrar la URL y opciones de la solicitud fetch
+    const fetchOptions = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mensaje: "webhook desde Linux" })
-    });
+    };
+    console.log("🌐 Enviando solicitud a: http://192.168.1.81:3001/api/webhook");
+    console.log("🔧 Opciones de fetch:", fetchOptions);
+
+    const response = await fetch("http://192.168.1.81:3001/api/webhook", fetchOptions);
+
+    // Depuración: Registrar el estado de la respuesta
+    console.log("✅ Respuesta recibida. Estado HTTP:", response.status, response.statusText);
+
     const data = await response.json();
-    console.log("Datos recibidos ACCESS webhook");
+    
+    // Depuración: Registrar los datos recibidos
+    console.log("📊 Datos recibidos del servidor remoto:", data);
+
+    // Enviar respuesta al cliente
     res.json(data);
   } catch (err) {
-    console.error("Error consumiendo el proxy:", err);
+    // Depuración: Registrar detalles del error
+    console.error("❌ Error consumiendo el proxy:");
+    console.error("Mensaje de error:", err.message);
+    console.error("Stack trace:", err.stack);
+
     res.status(500).json({ error: err.message });
   }
 });
