@@ -25,7 +25,11 @@ router.post("/webhook", (req, res) => {
 // Endpoint para recibir el webhook y desplegar
 router.post("/backendWindos", async (req, res) => {
   try {
-    const response = await fetch("http://192.168.1.81:3001/api/webhook");
+    const response = await fetch("http://192.168.1.81:3001/api/webhook", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mensaje: "webhook desde Linux" })
+    });
     const data = await response.json();
     console.log("Datos recibidos ACCESS webhook");
     res.json(data);
@@ -34,5 +38,6 @@ router.post("/backendWindos", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 module.exports = router;
