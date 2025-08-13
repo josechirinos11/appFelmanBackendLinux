@@ -55,4 +55,56 @@ router.post('/sql', async (req, res) => {
   }
 });
 
+
+// === CONTROL-OPERARIOS: último evento por operario ===========================
+/**
+ * GET /control-optima/_OptimaTemp
+ * Devuelve una fila por operario (USERNAME) con su último evento en DASHBOARD_QALOG.
+ * Params: ?limit=100  (opcional; por defecto 100)
+ */
+router.get('/_OptimaTemp', async (req, res) => {
+  const limit = Number(req.query.limit) || 100;
+  console.log('🔍 Petición recibida en /control-optima/_OptimaTemp, limit =', limit);
+
+  // TOP(N) dinámico
+  const top = limit > 0 ? `TOP (${limit})` : '';
+
+  // Último evento por USERNAME, tomando la fila completa más reciente
+  const q = `
+    SELECT ${top}
+           q.USERNAME,
+           q.ID_QALOG,
+           q.RIF,
+           q.RIGA,
+           q.BARCODE,
+           q.CLIENTCREATE,
+           q.DATE_COMPL AS LASTDATE,
+           q.ID_COMMESSE,
+           q.PROGR
+    FROM (
+      SELECT USERNAME, MAX(DATE_COMPL) AS LAST_DATE
+      FROM DASHBOARD_QALOG
+      WHERE USERNAME IS NOT NULL AND USERNAME <> ''
+      GROUP BY USERNAME
+    ) AS le
+    JOIN DASHBOARD_QALOG AS q
+      ON q.USERNAME = le.USERNAME
+     AND q.DATE_COMPL = le.LAST_DATE
+    ORDER BY q.DATE_COMPL DESC;
+  `;
+
+  try {
+    const pool = await poolPromise; // (de databaseOptima.js con mssql)
+    const result = await pool.request().query(q);
+    console.log(`✅ _OptimaTemp OK - Operarios: ${result.recordset.length}`);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('❌ ERROR EN /control-optima/_OptimaTemp:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+
+
 module.exports = router;
