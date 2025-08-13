@@ -39,18 +39,16 @@ router.post('/sql', async (req, res) => {
 
 
 router.get('/DASHBOARD_QALOG', async (req, res) => {
-    console.log("🔍 Petición recibida en /optima/DASHBOARD_QALOG");
-    try {
-      const pool = await poolPromise;
-      const result = await pool.request()
-        .query('SELECT * FROM DASHBOARD_QALOG');
-      res.json(result.recordset);
-    } catch (err) {
-      console.error('Error en DASHBOARD_QALOG', err);
-      res.status(500).json({ status: 'error', message: err.message });
-    }
-  });
-
+  console.log("🔍 Petición recibida en /optima/DASHBOARD_QALOG");
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT * FROM DASHBOARD_QALOG');
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error en DASHBOARD_QALOG', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 
 
 
