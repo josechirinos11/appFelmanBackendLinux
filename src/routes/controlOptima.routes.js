@@ -66,35 +66,38 @@ router.get('/_OptimaTemp', async (req, res) => {
   const limit = Number(req.query.limit) || 100;
   console.log('🔍 Petición recibida en /control-optima/_OptimaTemp, limit =', limit);
 
-  // TOP(N) dinámico
+  // TOP(N) dinámico para SQL Server
   const top = limit > 0 ? `TOP (${limit})` : '';
 
-  // Último evento por USERNAME, tomando la fila completa más reciente
+  // NOTA: Usamos columnas reales de DASHBOARD_QALOG (CLIENTNAME en vez de CLIENTCREATE).
   const q = `
+    WITH Ultimo AS (
+      SELECT USERNAME, MAX(DATE_COMPL) AS LAST_DATE
+      FROM DASHBOARD_QALOG
+      WHERE USERNAME IS NOT NULL AND USERNAME <> ''
+      GROUP BY USERNAME
+    )
     SELECT ${top}
            q.USERNAME,
            q.ID_QALOG,
            q.RIF,
            q.RIGA,
            q.BARCODE,
-           q.CLIENTCREATE,
-           q.DATE_COMPL AS LASTDATE,
+           q.CLIENTNAME,               -- << aquí el cambio correcto
+           q.DATE_COMPL   AS LASTDATE,
            q.ID_COMMESSE,
-           q.PROGR
-    FROM (
-      SELECT USERNAME, MAX(DATE_COMPL) AS LAST_DATE
-      FROM DASHBOARD_QALOG
-      WHERE USERNAME IS NOT NULL AND USERNAME <> ''
-      GROUP BY USERNAME
-    ) AS le
-    JOIN DASHBOARD_QALOG AS q
-      ON q.USERNAME = le.USERNAME
-     AND q.DATE_COMPL = le.LAST_DATE
+           q.PROGR,
+           q.EventName,
+           q.ActionName
+    FROM Ultimo u
+    JOIN DASHBOARD_QALOG q
+      ON q.USERNAME = u.USERNAME
+     AND q.DATE_COMPL = u.LAST_DATE
     ORDER BY q.DATE_COMPL DESC;
   `;
 
   try {
-    const pool = await poolPromise; // (de databaseOptima.js con mssql)
+    const pool = await poolPromise; // proviene de databaseOptima.js (mssql)
     const result = await pool.request().query(q);
     console.log(`✅ _OptimaTemp OK - Operarios: ${result.recordset.length}`);
     res.json(result.recordset);
