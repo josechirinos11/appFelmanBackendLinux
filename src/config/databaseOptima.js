@@ -1,28 +1,29 @@
-const mysql = require('mysql2/promise');
 
 
-
+// databaseOptima.js
+const sql = require('mssql');
 require('dotenv').config();
 
+const config = {
+  user: process.env.DB_USER_OPTIMA,     // ej. 'Javier'
+  password: process.env.DB_PASS_OPTIMA, // ej. 'javier01'
+  server: process.env.DB_HOST_OPTIMA,   // ej. '128.0.0.60'
+  port: Number(process.env.DB_PORT_OPTIMA) || 56414,
+  database: process.env.DB_NAME_OPTIMA, // ej. 'Felman_2024'
+  options: {
+    encrypt: false, // pon true si usas SSL
+    trustServerCertificate: true
+  }
+};
 
-console.log('🌐 Conectando a TERMINALES DB con:');
-console.log({
-  host: process.env.DB_HOST_OPTIMA,
-  port: process.env.DB_PORT_OPTIMA,
-  user: process.env.DB_USER_OPTIMA,
-  database: process.env.DB_NAME_OPTIMA,
-});
+const poolPromise = sql.connect(config)
+  .then(pool => {
+    console.log('✅ Conectado a SQL Server Óptima');
+    return pool;
+  })
+  .catch(err => {
+    console.error('❌ Error conectando a SQL Server Óptima', err);
+    throw err;
+  });
 
-
-const pool = mysql.createPool({
-  host: process.env.DB_HOST_OPTIMA,
-  port: process.env.DB_PORT_OPTIMA,
-  user: process.env.DB_USER_OPTIMA,
-  password: process.env.DB_PASS_OPTIMA,
-  database: process.env.DB_NAME_OPTIMA,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
-
-module.exports = pool; 
+module.exports = { sql, poolPromise };
