@@ -4,20 +4,32 @@ const pool = require("../config/databaseTerminales");
 const router = express.Router();
 
 
-router.post("/sql", async (req, res) => {
+/**
+ * POST /control-optima/sql
+ * Ejecuta una consulta SQL de SOLO LECTURA (SELECT) contra la BD de Óptima.
+ * Body: { "query": "SELECT ..."}
+ */
+router.post('/sql', async (req, res) => {
   const { query } = req.body;
-  if (!query) {
-    return res.status(400).json({ status: "error", message: "Falta la consulta SQL en el cuerpo" });
+  if (!query || typeof query !== 'string') {
+    return res.status(400).json({ status: 'error', message: 'Falta la consulta SQL en el cuerpo' });
+  }
+
+  // Protección básica: sólo SELECT (evita UPDATE/DELETE/DDL).
+  const q = query.trim();
+  if (!/^select\b/i.test(q)) {
+    return res.status(400).json({ status: 'error', message: 'Solo se permiten consultas SELECT' });
   }
 
   try {
-    const [rows] = await pool.execute(query);
-    res.status(200).json(rows);
+    // Usar query() en lugar de execute() para SQL arbitrario
+    const [rows] = await pool.query(q);
+    return res.status(200).json(rows);
   } catch (error) {
-    console.error("❌ ERROR EN /sql:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Error al ejecutar la consulta",
+    console.error('❌ ERROR EN /control-optima/sql:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error al ejecutar la consulta',
       detail: error.message,
     });
   }
