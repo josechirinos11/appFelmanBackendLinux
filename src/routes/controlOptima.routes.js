@@ -10,6 +10,7 @@ const router = express.Router();
  * Body: { "query": "SELECT ..."}
  */
 router.post('/sql', async (req, res) => {
+  console.log("🔍 Petición recibida en /control-optima/sql");
   const { query } = req.body;
   if (!query || typeof query !== 'string') {
     return res.status(400).json({ status: 'error', message: 'Falta la consulta SQL en el cuerpo' });
@@ -38,6 +39,7 @@ router.post('/sql', async (req, res) => {
 
 
   router.get("/DASHBOARD_QALOG", async (req, res) => {
+    console.log("🔍 Petición recibida en /optima/DASHBOARD_QALOG");
     try {
       const [result] = await pool.execute("SELECT * FROM DASHBOARD_QALOG");
       res.status(200).json(result);
