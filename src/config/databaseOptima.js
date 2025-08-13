@@ -1,8 +1,7 @@
-
-
-// databaseOptima.js
+// src/config/databaseOptima.js
 const sql = require('mssql');
 require('dotenv').config();
+
 
 const config = {
   user: process.env.DB_USER_OPTIMA,     // ej. 'Javier'
@@ -16,7 +15,11 @@ const config = {
   }
 };
 
-const poolPromise = sql.connect(config)
+
+
+
+const poolPromise = new sql.ConnectionPool(config)
+  .connect()
   .then(pool => {
     console.log('✅ Conectado a SQL Server Óptima');
     return pool;
