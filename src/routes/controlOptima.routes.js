@@ -115,23 +115,16 @@ router.get('/_OptimaTemp', async (req, res) => {
  *  - from (YYYY-MM-DD) opcional; por defecto hoy - 30 días
  *  - to   (YYYY-MM-DD) opcional; por defecto hoy
  *  - page (1..n)       opcional; por defecto 1
- *  - pageSize          opcional; por defecto 50
- *  - search            opcional; busca en PEDIDO/USERNAME/NOMBRE/PRODUCTO/CENTRO_TRABAJO/VIDRIO
+ *  - pageSize          opcional; por defecto 50 (máx 500)
+ *  - search            opcional (PEDIDO/USERNAME/NOMBRE/PRODUCTO/CENTRO_TRABAJO/VIDRIO)
  *
- * Respuesta:
- *  {
- *    items: [...],
- *    page, pageSize, total,
- *    from, to,
- *    orderBy: "DATAHORA_COMPL", orderDir: "DESC",
- *    agg: { piezas, area }
- *  }
+ * Respuesta: { items, page, pageSize, total, from, to, orderBy, orderDir, agg:{piezas, area} }
  */
 router.get('/barcoder', async (req, res) => {
   const { from, to, page = '1', pageSize = '50', search = '' } = req.query;
   console.log('🔍 GET /control-optima/barcoder', { from, to, page, pageSize, search });
 
-  // Defaults de fecha (últimos 30 días) en JS; el SQL usará estos valores
+  // Defaults (últimos 30 días) en JS
   const today = new Date();
   const pad = (n) => (n < 10 ? '0' + n : '' + n);
   const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -142,7 +135,7 @@ router.get('/barcoder', async (req, res) => {
   const fromParam = (typeof from === 'string' && from.trim()) ? from : defFrom;
   const toParam   = (typeof to   === 'string' && to.trim())   ? to   : defTo;
   const pageNum   = Math.max(1, parseInt(page, 10) || 1);
-  const sizeNum   = Math.min(500, Math.max(1, parseInt(pageSize, 10) || 50)); // cap seguridad
+  const sizeNum   = Math.min(500, Math.max(1, parseInt(pageSize, 10) || 50));
   const offset    = (pageNum - 1) * sizeNum;
   const searchTxt = (typeof search === 'string' && search.trim()) ? search.trim() : null;
 
@@ -155,37 +148,41 @@ router.get('/barcoder', async (req, res) => {
       .input('pageSize', sql.Int,  sizeNum)
       .input('search',   sql.NVarChar, searchTxt);
 
+    // Usamos tabla temporal #base para reutilizar el conjunto filtrado
     const query = `
-      ;WITH base AS (
-        SELECT *
-        FROM DASHBOARD_BARCODE_VIEW WITH (NOLOCK)
-        WHERE DATAHORA_COMPL >= @from
-          AND DATAHORA_COMPL < DATEADD(DAY, 1, @to)
-          AND ( @search IS NULL OR @search = ''
-                OR PEDIDO         LIKE '%' + @search + '%'
-                OR USERNAME       LIKE '%' + @search + '%'
-                OR NOMBRE         LIKE '%' + @search + '%'
-                OR PRODUCTO       LIKE '%' + @search + '%'
-                OR CENTRO_TRABAJO LIKE '%' + @search + '%'
-                OR VIDRIO         LIKE '%' + @search + '%'
-              )
-      )
-      SELECT
-        COUNT(*)                                    AS total,
-        ISNULL(SUM(CAST(PIEZAS AS float)), 0)       AS piezas,
-        ISNULL(SUM(CAST(AREA   AS float)), 0)       AS area
-      FROM base;
+      IF OBJECT_ID('tempdb..#base') IS NOT NULL DROP TABLE #base;
 
       SELECT *
-      FROM base
+      INTO #base
+      FROM DASHBOARD_BARCODE_VIEW WITH (NOLOCK)
+      WHERE DATAHORA_COMPL >= @from
+        AND DATAHORA_COMPL < DATEADD(DAY, 1, @to)
+        AND ( @search IS NULL OR @search = ''
+              OR PEDIDO         LIKE '%' + @search + '%'
+              OR USERNAME       LIKE '%' + @search + '%'
+              OR NOMBRE         LIKE '%' + @search + '%'
+              OR PRODUCTO       LIKE '%' + @search + '%'
+              OR CENTRO_TRABAJO LIKE '%' + @search + '%'
+              OR VIDRIO         LIKE '%' + @search + '%'
+            );
+
+      SELECT
+        COUNT(*)                                AS total,
+        ISNULL(SUM(CAST(PIEZAS AS float)), 0)   AS piezas,
+        ISNULL(SUM(CAST(AREA   AS float)), 0)   AS area
+      FROM #base;
+
+      SELECT *
+      FROM #base
       ORDER BY DATAHORA_COMPL DESC
       OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
+
+      DROP TABLE #base;
     `;
 
     const result = await request.query(query);
-    // result.recordsets[0] => totales, result.recordsets[1] => items
-    const totals = result.recordsets[0]?.[0] || { total: 0, piezas: 0, area: 0 };
-    const items  = result.recordsets[1] || [];
+    const totals = result.recordsets?.[0]?.[0] || { total: 0, piezas: 0, area: 0 };
+    const items  = result.recordsets?.[1] || [];
 
     console.log(`✅ /barcoder OK page=${pageNum} size=${sizeNum} total=${totals.total} items=${items.length}`);
 
