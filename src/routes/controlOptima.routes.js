@@ -108,23 +108,11 @@ router.get('/_OptimaTemp', async (req, res) => {
 });
 
 
-// === DASHBOARD_BARCODE_VIEW: listado paginado con filtros ====================
-/**
- * GET /control-optima/barcoder
- * Query:
- *  - from (YYYY-MM-DD) opcional; por defecto hoy - 30 días
- *  - to   (YYYY-MM-DD) opcional; por defecto hoy
- *  - page (1..n)       opcional; por defecto 1
- *  - pageSize          opcional; por defecto 50 (máx 500)
- *  - search            opcional (PEDIDO/USERNAME/NOMBRE/PRODUCTO/CENTRO_TRABAJO/VIDRIO)
- *
- * Respuesta: { items, page, pageSize, total, from, to, orderBy, orderDir, agg:{piezas, area} }
- */
 router.get('/barcoder', async (req, res) => {
   const { from, to, page = '1', pageSize = '50', search = '' } = req.query;
   console.log('🔍 GET /control-optima/barcoder', { from, to, page, pageSize, search });
 
-  // Defaults (últimos 30 días) en JS
+  // Defaults (últimos 30 días desde hoy, solo para params iniciales)
   const today = new Date();
   const pad = (n) => (n < 10 ? '0' + n : '' + n);
   const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -148,15 +136,17 @@ router.get('/barcoder', async (req, res) => {
       .input('pageSize', sql.Int,  sizeNum)
       .input('search',   sql.NVarChar, searchTxt);
 
-    // Usamos tabla temporal #base para reutilizar el conjunto filtrado
     const query = `
+      -- 1) Intento con el rango solicitado
       IF OBJECT_ID('tempdb..#base') IS NOT NULL DROP TABLE #base;
 
-      SELECT *
+      SELECT
+        *,
+        COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) AS EventDT
       INTO #base
       FROM DASHBOARD_BARCODE_VIEW WITH (NOLOCK)
-      WHERE DATAHORA_COMPL >= @from
-        AND DATAHORA_COMPL < DATEADD(DAY, 1, @to)
+      WHERE COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) >= @from
+        AND COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) < DATEADD(DAY, 1, @to)
         AND ( @search IS NULL OR @search = ''
               OR PEDIDO         LIKE '%' + @search + '%'
               OR USERNAME       LIKE '%' + @search + '%'
@@ -166,36 +156,75 @@ router.get('/barcoder', async (req, res) => {
               OR VIDRIO         LIKE '%' + @search + '%'
             );
 
+      DECLARE @rows INT = (SELECT COUNT(*) FROM #base);
+      DECLARE @usedFrom DATE = @from, @usedTo DATE = @to;
+
+      -- 2) Fallback: si no hay filas, usar los últimos 30 días desde el dato más reciente
+      IF (@rows = 0)
+      BEGIN
+        DECLARE @maxDt DATETIME = (SELECT MAX(COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime))) FROM DASHBOARD_BARCODE_VIEW WITH (NOLOCK));
+        IF (@maxDt IS NOT NULL)
+        BEGIN
+          SET @usedTo = CAST(@maxDt AS DATE);
+          SET @usedFrom = DATEADD(DAY, -30, @usedTo);
+
+          IF OBJECT_ID('tempdb..#base') IS NOT NULL DROP TABLE #base;
+
+          SELECT
+            *,
+            COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) AS EventDT
+          INTO #base
+          FROM DASHBOARD_BARCODE_VIEW WITH (NOLOCK)
+          WHERE COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) >= @usedFrom
+            AND COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) < DATEADD(DAY, 1, @usedTo)
+            AND ( @search IS NULL OR @search = ''
+                  OR PEDIDO         LIKE '%' + @search + '%'
+                  OR USERNAME       LIKE '%' + @search + '%'
+                  OR NOMBRE         LIKE '%' + @search + '%'
+                  OR PRODUCTO       LIKE '%' + @search + '%'
+                  OR CENTRO_TRABAJO LIKE '%' + @search + '%'
+                  OR VIDRIO         LIKE '%' + @search + '%'
+                );
+
+          SET @rows = (SELECT COUNT(*) FROM #base);
+        END
+      END
+
+      -- Totales y página
       SELECT
+        @usedFrom AS usedFrom,
+        @usedTo   AS usedTo,
         COUNT(*)                                AS total,
-        ISNULL(SUM(CAST(PIEZAS AS float)), 0)   AS piezas,
-        ISNULL(SUM(CAST(AREA   AS float)), 0)   AS area
+        ISNULL(SUM(CAST(PIEZAS AS float)),0)    AS piezas,
+        ISNULL(SUM(CAST(AREA   AS float)),0)    AS area
       FROM #base;
 
       SELECT *
       FROM #base
-      ORDER BY DATAHORA_COMPL DESC
+      ORDER BY EventDT DESC
       OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
 
       DROP TABLE #base;
     `;
 
     const result = await request.query(query);
-    const totals = result.recordsets?.[0]?.[0] || { total: 0, piezas: 0, area: 0 };
+    const meta   = result.recordsets?.[0]?.[0] || { total: 0, piezas: 0, area: 0, usedFrom: fromParam, usedTo: toParam };
     const items  = result.recordsets?.[1] || [];
 
-    console.log(`✅ /barcoder OK page=${pageNum} size=${sizeNum} total=${totals.total} items=${items.length}`);
+    console.log(`✅ /barcoder OK page=${pageNum} size=${sizeNum} total=${meta.total} items=${items.length} usedFrom=${fmt(new Date(meta.usedFrom))} usedTo=${fmt(new Date(meta.usedTo))}`);
 
     return res.json({
       items,
       page: pageNum,
       pageSize: sizeNum,
-      total: totals.total,
+      total: meta.total,
       from: fromParam,
       to: toParam,
-      orderBy: 'DATAHORA_COMPL',
+      usedFrom: meta.usedFrom,
+      usedTo: meta.usedTo,
+      orderBy: 'EventDT',
       orderDir: 'DESC',
-      agg: { piezas: totals.piezas, area: totals.area }
+      agg: { piezas: meta.piezas, area: meta.area }
     });
 
   } catch (err) {
