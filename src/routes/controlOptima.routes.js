@@ -350,13 +350,16 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
 
 
 
-
-
 // === DASHBOARD_STATUS_ORDER_VIEW ===============================================
+// GET /control-optima/barcoder-order
+// Query: from,to (YYYY-MM-DD), page, pageSize, search
+// Lógica: usa FechaPedido; si no hay filas -> últimos 30 días desde MAX(FechaPedido);
+// si aún no hay -> usa FechaEntrega con mismos criterios.
 router.get('/barcoder-order', async (req, res) => {
   const { from, to, page = '1', pageSize = '50', search = '' } = req.query;
   console.log('🔍 GET /control-optima/barcoder-order', { from, to, page, pageSize, search });
 
+  // Defaults (últimos 30 días desde hoy)
   const today = new Date();
   const pad = (n) => (n < 10 ? '0' + n : '' + n);
   const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -373,36 +376,35 @@ router.get('/barcoder-order', async (req, res) => {
 
   try {
     const pool = await poolPromise;
-    const request = pool.request()
+    const rq = pool.request()
       .input('from',     sql.Date,     fromParam)
       .input('to',       sql.Date,     toParam)
       .input('offset',   sql.Int,      offset)
       .input('pageSize', sql.Int,      sizeNum)
       .input('search',   sql.NVarChar, searchTxt);
 
+    // Función SQL reutilizable en el batch con parámetros locales
     const query = `
 DECLARE @usedFrom DATE = @from;
 DECLARE @usedTo   DATE = @to;
-DECLARE @cnt INT;
+DECLARE @mode NVARCHAR(16) = 'Pedido'; -- 'Pedido' o 'Entrega'
+DECLARE @cnt INT = 0;
 
--- 1) Intento con FechaPedido
-SELECT @cnt = COUNT(*)
-FROM (
-  SELECT 1
-  FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
-  WHERE FechaPedido >= @usedFrom
-    AND FechaPedido < DATEADD(DAY, 1, @usedTo)
-    AND ( @search IS NULL OR @search = ''
-          OR Pedido      LIKE '%' + @search + '%'
-          OR RefCli      LIKE '%' + @search + '%'
-          OR DescrLinea  LIKE '%' + @search + '%'
-          OR CodDet      LIKE '%' + @search + '%'
-          OR DescDet     LIKE '%' + @search + '%'
-          OR RazonSocial LIKE '%' + @search + '%'
-        )
-) s;
+-- 1) Intento: FechaPedido
+SELECT @cnt = COUNT(1)
+FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
+WHERE FechaPedido >= @usedFrom
+  AND FechaPedido < DATEADD(DAY, 1, @usedTo)
+  AND ( @search IS NULL OR @search = ''
+        OR Pedido      LIKE '%' + @search + '%'
+        OR RefCli      LIKE '%' + @search + '%'
+        OR DescrLinea  LIKE '%' + @search + '%'
+        OR CodDet      LIKE '%' + @search + '%'
+        OR DescDet     LIKE '%' + @search + '%'
+        OR RazonSocial LIKE '%' + @search + '%'
+      );
 
--- 2) Fallback por FechaPedido (últimos 30 días del máximo FechaPedido)
+-- 2) Fallback por FechaPedido: últimos 30 días del máximo FechaPedido
 IF (@cnt = 0)
 BEGIN
   DECLARE @maxFP DATETIME = (SELECT MAX(FechaPedido) FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK));
@@ -411,36 +413,50 @@ BEGIN
     SET @usedTo   = CAST(@maxFP AS DATE);
     SET @usedFrom = DATEADD(DAY, -30, @usedTo);
 
-    SELECT @cnt = COUNT(*)
-    FROM (
-      SELECT 1
-      FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
-      WHERE FechaPedido >= @usedFrom
-        AND FechaPedido < DATEADD(DAY, 1, @usedTo)
-        AND ( @search IS NULL OR @search = ''
-              OR Pedido      LIKE '%' + @search + '%'
-              OR RefCli      LIKE '%' + @search + '%'
-              OR DescrLinea  LIKE '%' + @search + '%'
-              OR CodDet      LIKE '%' + @search + '%'
-              OR DescDet     LIKE '%' + @search + '%'
-              OR RazonSocial LIKE '%' + @search + '%'
-            )
-    ) s2;
+    SELECT @cnt = COUNT(1)
+    FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
+    WHERE FechaPedido >= @usedFrom
+      AND FechaPedido < DATEADD(DAY, 1, @usedTo)
+      AND ( @search IS NULL OR @search = ''
+            OR Pedido      LIKE '%' + @search + '%'
+            OR RefCli      LIKE '%' + @search + '%'
+            OR DescrLinea  LIKE '%' + @search + '%'
+            OR CodDet      LIKE '%' + @search + '%'
+            OR DescDet     LIKE '%' + @search + '%'
+            OR RazonSocial LIKE '%' + @search + '%'
+          );
   END
 END
 
--- 3) Si aún no hay, reintenta con FechaEntrega (máximo)
+-- 3) Si aún no hay, probar con FechaEntrega (máximo)
 IF (@cnt = 0)
 BEGIN
-  DECLARE @maxFE DATETIME = (SELECT MAX(FechaEntrega) FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK));
-  IF (@maxFE IS NOT NULL)
-  BEGIN
-    SET @usedTo   = CAST(@maxFE AS DATE);
-    SET @usedFrom = DATEADD(DAY, -30, @usedTo);
+  SET @mode = 'Entrega';
+  SET @usedFrom = @from;
+  SET @usedTo   = @to;
 
-    SELECT @cnt = COUNT(*)
-    FROM (
-      SELECT 1
+  SELECT @cnt = COUNT(1)
+  FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
+  WHERE FechaEntrega >= @usedFrom
+    AND FechaEntrega < DATEADD(DAY, 1, @usedTo)
+    AND ( @search IS NULL OR @search = ''
+          OR Pedido      LIKE '%' + @search + '%'
+          OR RefCli      LIKE '%' + @search + '%'
+          OR DescrLinea  LIKE '%' + @search + '%'
+          OR CodDet      LIKE '%' + @search + '%'
+          OR DescDet     LIKE '%' + @search + '%'
+          OR RazonSocial LIKE '%' + @search + '%'
+        );
+
+  IF (@cnt = 0)
+  BEGIN
+    DECLARE @maxFE DATETIME = (SELECT MAX(FechaEntrega) FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK));
+    IF (@maxFE IS NOT NULL)
+    BEGIN
+      SET @usedTo   = CAST(@maxFE AS DATE);
+      SET @usedFrom = DATEADD(DAY, -30, @usedTo);
+
+      SELECT @cnt = COUNT(1)
       FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
       WHERE FechaEntrega >= @usedFrom
         AND FechaEntrega < DATEADD(DAY, 1, @usedTo)
@@ -451,21 +467,22 @@ BEGIN
               OR CodDet      LIKE '%' + @search + '%'
               OR DescDet     LIKE '%' + @search + '%'
               OR RazonSocial LIKE '%' + @search + '%'
-            )
-    ) s3;
+            );
+    END
   END
 END
 
--- 4) Totales (usaremos FechaPedido si hay cnt>0, si no, FechaEntrega)
-IF (@cnt > 0)
+-- 4) Totales + Página según @mode
+IF (@mode = 'Pedido')
 BEGIN
   SELECT
     @usedFrom AS usedFrom,
     @usedTo   AS usedTo,
+    @mode     AS mode,
     COUNT(*)  AS total,
-    ISNULL(SUM(CAST(TotPiezas AS float)), 0)       AS piezas,
-    ISNULL(SUM(CAST(PiezasLinea AS float)), 0)     AS piezasLinea,
-    ISNULL(SUM(CAST(PiezasDet AS float)), 0)       AS piezasDet
+    ISNULL(SUM(CAST(TotPiezas     AS float)),0) AS piezas,
+    ISNULL(SUM(CAST(PiezasLinea   AS float)),0) AS piezasLinea,
+    ISNULL(SUM(CAST(PiezasDet     AS float)),0) AS piezasDet
   FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
   WHERE FechaPedido >= @usedFrom
     AND FechaPedido < DATEADD(DAY, 1, @usedTo)
@@ -480,9 +497,7 @@ BEGIN
 
   SELECT *
   FROM (
-    SELECT
-      *,
-      FechaPedido AS EventDT
+    SELECT *, FechaPedido AS EventDT
     FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
     WHERE FechaPedido >= @usedFrom
       AND FechaPedido < DATEADD(DAY, 1, @usedTo)
@@ -503,10 +518,11 @@ BEGIN
   SELECT
     @usedFrom AS usedFrom,
     @usedTo   AS usedTo,
+    @mode     AS mode,
     COUNT(*)  AS total,
-    ISNULL(SUM(CAST(TotPiezas AS float)), 0)       AS piezas,
-    ISNULL(SUM(CAST(PiezasLinea AS float)), 0)     AS piezasLinea,
-    ISNULL(SUM(CAST(PiezasDet AS float)), 0)       AS piezasDet
+    ISNULL(SUM(CAST(TotPiezas     AS float)),0) AS piezas,
+    ISNULL(SUM(CAST(PiezasLinea   AS float)),0) AS piezasLinea,
+    ISNULL(SUM(CAST(PiezasDet     AS float)),0) AS piezasDet
   FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
   WHERE FechaEntrega >= @usedFrom
     AND FechaEntrega < DATEADD(DAY, 1, @usedTo)
@@ -521,9 +537,7 @@ BEGIN
 
   SELECT *
   FROM (
-    SELECT
-      *,
-      FechaEntrega AS EventDT
+    SELECT *, FechaEntrega AS EventDT
     FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
     WHERE FechaEntrega >= @usedFrom
       AND FechaEntrega < DATEADD(DAY, 1, @usedTo)
@@ -541,11 +555,11 @@ BEGIN
 END
     `;
 
-    const result = await request.query(query);
-    const meta  = result.recordsets?.[0]?.[0] || { total: 0, piezas: 0, piezasLinea: 0, piezasDet: 0, usedFrom: fromParam, usedTo: toParam };
+    const result = await rq.query(query);
+    const meta  = result.recordsets?.[0]?.[0] || { total: 0, usedFrom: fromParam, usedTo: toParam, mode: 'Pedido', piezas: 0, piezasLinea: 0, piezasDet: 0 };
     const items = result.recordsets?.[1] || [];
 
-    console.log(`✅ /barcoder-order OK page=${pageNum} size=${sizeNum} total=${meta.total} items=${items.length} usedFrom=${meta.usedFrom} usedTo=${meta.usedTo}`);
+    console.log(`✅ /barcoder-order OK mode=${meta.mode} page=${pageNum} size=${sizeNum} total=${meta.total} items=${items.length} usedFrom=${meta.usedFrom} usedTo=${meta.usedTo}`);
 
     return res.json({
       items,
@@ -556,6 +570,7 @@ END
       to: toParam,
       usedFrom: meta.usedFrom,
       usedTo: meta.usedTo,
+      mode: meta.mode,                // 'Pedido' o 'Entrega'
       orderBy: 'EventDT',
       orderDir: 'DESC',
       agg: { piezas: meta.piezas, piezasLinea: meta.piezasLinea, piezasDet: meta.piezasDet }
