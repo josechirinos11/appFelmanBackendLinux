@@ -208,5 +208,367 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
 
 
 
+// === DASHBOARD_BARCODE_DET_VIEW =================================================
+router.get('/barcoder-det', async (req, res) => {
+  const { from, to, page = '1', pageSize = '50', search = '' } = req.query;
+  console.log('🔍 GET /control-optima/barcoder-det', { from, to, page, pageSize, search });
+
+  const today = new Date();
+  const pad = (n) => (n < 10 ? '0' + n : '' + n);
+  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const defTo = fmt(today);
+  const d30 = new Date(today); d30.setDate(d30.getDate() - 30);
+  const defFrom = fmt(d30);
+
+  const fromParam = (typeof from === 'string' && from.trim()) ? from : defFrom;
+  const toParam   = (typeof to   === 'string' && to.trim())   ? to   : defTo;
+  const pageNum   = Math.max(1, parseInt(page, 10) || 1);
+  const sizeNum   = Math.min(500, Math.max(1, parseInt(pageSize, 10) || 50));
+  const offset    = (pageNum - 1) * sizeNum;
+  const searchTxt = (typeof search === 'string' && search.trim()) ? search.trim() : null;
+
+  try {
+    const pool = await poolPromise;
+    const request = pool.request()
+      .input('from',     sql.Date,     fromParam)
+      .input('to',       sql.Date,     toParam)
+      .input('offset',   sql.Int,      offset)
+      .input('pageSize', sql.Int,      sizeNum)
+      .input('search',   sql.NVarChar, searchTxt);
+
+    const query = `
+DECLARE @usedFrom DATE = @from;
+DECLARE @usedTo   DATE = @to;
+
+-- ¿Hay filas en el rango pedido?
+DECLARE @cnt INT;
+SELECT @cnt = COUNT(*)
+FROM (
+  SELECT 1
+  FROM DASHBOARD_BARCODE_DET_VIEW WITH (NOLOCK)
+  WHERE COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) >= @usedFrom
+    AND COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) < DATEADD(DAY, 1, @usedTo)
+    AND ( @search IS NULL OR @search = ''
+          OR PEDIDO         LIKE '%' + @search + '%'
+          OR USERNAME       LIKE '%' + @search + '%'
+          OR NOMBRE         LIKE '%' + @search + '%'
+          OR PRODUCTO       LIKE '%' + @search + '%'
+          OR TRABAJO        LIKE '%' + @search + '%'
+          OR DESC_TRABAJO   LIKE '%' + @search + '%'
+          OR CENTRO_TRABAJO LIKE '%' + @search + '%'
+          OR VIDRIO         LIKE '%' + @search + '%'
+        )
+) s;
+
+-- Fallback: últimos 30 días del dato más reciente
+IF (@cnt = 0)
+BEGIN
+  DECLARE @maxDt DATETIME = (
+    SELECT MAX(COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)))
+    FROM DASHBOARD_BARCODE_DET_VIEW WITH (NOLOCK)
+  );
+  IF (@maxDt IS NOT NULL)
+  BEGIN
+    SET @usedTo = CAST(@maxDt AS DATE);
+    SET @usedFrom = DATEADD(DAY, -30, @usedTo);
+  END
+END
+
+-- Totales/agregados
+SELECT
+  @usedFrom                                     AS usedFrom,
+  @usedTo                                       AS usedTo,
+  COUNT(*)                                      AS total,
+  ISNULL(SUM(CAST(PIEZAS AS float)), 0)         AS piezas,
+  ISNULL(SUM(CAST(AREA   AS float)), 0)         AS area
+FROM DASHBOARD_BARCODE_DET_VIEW WITH (NOLOCK)
+WHERE COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) >= @usedFrom
+  AND COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) < DATEADD(DAY, 1, @usedTo)
+  AND ( @search IS NULL OR @search = ''
+        OR PEDIDO         LIKE '%' + @search + '%'
+        OR USERNAME       LIKE '%' + @search + '%'
+        OR NOMBRE         LIKE '%' + @search + '%'
+        OR PRODUCTO       LIKE '%' + @search + '%'
+        OR TRABAJO        LIKE '%' + @search + '%'
+        OR DESC_TRABAJO   LIKE '%' + @search + '%'
+        OR CENTRO_TRABAJO LIKE '%' + @search + '%'
+        OR VIDRIO         LIKE '%' + @search + '%'
+      );
+
+-- Página
+SELECT *
+FROM (
+  SELECT
+    *,
+    COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) AS EventDT
+  FROM DASHBOARD_BARCODE_DET_VIEW WITH (NOLOCK)
+  WHERE COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) >= @usedFrom
+    AND COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) < DATEADD(DAY, 1, @usedTo)
+    AND ( @search IS NULL OR @search = ''
+          OR PEDIDO         LIKE '%' + @search + '%'
+          OR USERNAME       LIKE '%' + @search + '%'
+          OR NOMBRE         LIKE '%' + @search + '%'
+          OR PRODUCTO       LIKE '%' + @search + '%'
+          OR TRABAJO        LIKE '%' + @search + '%'
+          OR DESC_TRABAJO   LIKE '%' + @search + '%'
+          OR CENTRO_TRABAJO LIKE '%' + @search + '%'
+          OR VIDRIO         LIKE '%' + @search + '%'
+        )
+) b
+ORDER BY b.EventDT DESC
+OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
+    `;
+
+    const result = await request.query(query);
+    const meta  = result.recordsets?.[0]?.[0] || { total: 0, piezas: 0, area: 0, usedFrom: fromParam, usedTo: toParam };
+    const items = result.recordsets?.[1] || [];
+
+    console.log(`✅ /barcoder-det OK page=${pageNum} size=${sizeNum} total=${meta.total} items=${items.length} usedFrom=${meta.usedFrom} usedTo=${meta.usedTo}`);
+
+    return res.json({
+      items,
+      page: pageNum,
+      pageSize: sizeNum,
+      total: meta.total,
+      from: fromParam,
+      to: toParam,
+      usedFrom: meta.usedFrom,
+      usedTo: meta.usedTo,
+      orderBy: 'EventDT',
+      orderDir: 'DESC',
+      agg: { piezas: meta.piezas, area: meta.area }
+    });
+
+  } catch (err) {
+    console.error('❌ ERROR EN /control-optima/barcoder-det:', err);
+    return res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+
+
+
+
+
+
+// === DASHBOARD_STATUS_ORDER_VIEW ===============================================
+router.get('/barcoder-order', async (req, res) => {
+  const { from, to, page = '1', pageSize = '50', search = '' } = req.query;
+  console.log('🔍 GET /control-optima/barcoder-order', { from, to, page, pageSize, search });
+
+  const today = new Date();
+  const pad = (n) => (n < 10 ? '0' + n : '' + n);
+  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const defTo = fmt(today);
+  const d30 = new Date(today); d30.setDate(d30.getDate() - 30);
+  const defFrom = fmt(d30);
+
+  const fromParam = (typeof from === 'string' && from.trim()) ? from : defFrom;
+  const toParam   = (typeof to   === 'string' && to.trim())   ? to   : defTo;
+  const pageNum   = Math.max(1, parseInt(page, 10) || 1);
+  const sizeNum   = Math.min(500, Math.max(1, parseInt(pageSize, 10) || 50));
+  const offset    = (pageNum - 1) * sizeNum;
+  const searchTxt = (typeof search === 'string' && search.trim()) ? search.trim() : null;
+
+  try {
+    const pool = await poolPromise;
+    const request = pool.request()
+      .input('from',     sql.Date,     fromParam)
+      .input('to',       sql.Date,     toParam)
+      .input('offset',   sql.Int,      offset)
+      .input('pageSize', sql.Int,      sizeNum)
+      .input('search',   sql.NVarChar, searchTxt);
+
+    const query = `
+DECLARE @usedFrom DATE = @from;
+DECLARE @usedTo   DATE = @to;
+DECLARE @cnt INT;
+
+-- 1) Intento con FechaPedido
+SELECT @cnt = COUNT(*)
+FROM (
+  SELECT 1
+  FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
+  WHERE FechaPedido >= @usedFrom
+    AND FechaPedido < DATEADD(DAY, 1, @usedTo)
+    AND ( @search IS NULL OR @search = ''
+          OR Pedido      LIKE '%' + @search + '%'
+          OR RefCli      LIKE '%' + @search + '%'
+          OR DescrLinea  LIKE '%' + @search + '%'
+          OR CodDet      LIKE '%' + @search + '%'
+          OR DescDet     LIKE '%' + @search + '%'
+          OR RazonSocial LIKE '%' + @search + '%'
+        )
+) s;
+
+-- 2) Fallback por FechaPedido (últimos 30 días del máximo FechaPedido)
+IF (@cnt = 0)
+BEGIN
+  DECLARE @maxFP DATETIME = (SELECT MAX(FechaPedido) FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK));
+  IF (@maxFP IS NOT NULL)
+  BEGIN
+    SET @usedTo   = CAST(@maxFP AS DATE);
+    SET @usedFrom = DATEADD(DAY, -30, @usedTo);
+
+    SELECT @cnt = COUNT(*)
+    FROM (
+      SELECT 1
+      FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
+      WHERE FechaPedido >= @usedFrom
+        AND FechaPedido < DATEADD(DAY, 1, @usedTo)
+        AND ( @search IS NULL OR @search = ''
+              OR Pedido      LIKE '%' + @search + '%'
+              OR RefCli      LIKE '%' + @search + '%'
+              OR DescrLinea  LIKE '%' + @search + '%'
+              OR CodDet      LIKE '%' + @search + '%'
+              OR DescDet     LIKE '%' + @search + '%'
+              OR RazonSocial LIKE '%' + @search + '%'
+            )
+    ) s2;
+  END
+END
+
+-- 3) Si aún no hay, reintenta con FechaEntrega (máximo)
+IF (@cnt = 0)
+BEGIN
+  DECLARE @maxFE DATETIME = (SELECT MAX(FechaEntrega) FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK));
+  IF (@maxFE IS NOT NULL)
+  BEGIN
+    SET @usedTo   = CAST(@maxFE AS DATE);
+    SET @usedFrom = DATEADD(DAY, -30, @usedTo);
+
+    SELECT @cnt = COUNT(*)
+    FROM (
+      SELECT 1
+      FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
+      WHERE FechaEntrega >= @usedFrom
+        AND FechaEntrega < DATEADD(DAY, 1, @usedTo)
+        AND ( @search IS NULL OR @search = ''
+              OR Pedido      LIKE '%' + @search + '%'
+              OR RefCli      LIKE '%' + @search + '%'
+              OR DescrLinea  LIKE '%' + @search + '%'
+              OR CodDet      LIKE '%' + @search + '%'
+              OR DescDet     LIKE '%' + @search + '%'
+              OR RazonSocial LIKE '%' + @search + '%'
+            )
+    ) s3;
+  END
+END
+
+-- 4) Totales (usaremos FechaPedido si hay cnt>0, si no, FechaEntrega)
+IF (@cnt > 0)
+BEGIN
+  SELECT
+    @usedFrom AS usedFrom,
+    @usedTo   AS usedTo,
+    COUNT(*)  AS total,
+    ISNULL(SUM(CAST(TotPiezas AS float)), 0)       AS piezas,
+    ISNULL(SUM(CAST(PiezasLinea AS float)), 0)     AS piezasLinea,
+    ISNULL(SUM(CAST(PiezasDet AS float)), 0)       AS piezasDet
+  FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
+  WHERE FechaPedido >= @usedFrom
+    AND FechaPedido < DATEADD(DAY, 1, @usedTo)
+    AND ( @search IS NULL OR @search = ''
+          OR Pedido      LIKE '%' + @search + '%'
+          OR RefCli      LIKE '%' + @search + '%'
+          OR DescrLinea  LIKE '%' + @search + '%'
+          OR CodDet      LIKE '%' + @search + '%'
+          OR DescDet     LIKE '%' + @search + '%'
+          OR RazonSocial LIKE '%' + @search + '%'
+        );
+
+  SELECT *
+  FROM (
+    SELECT
+      *,
+      FechaPedido AS EventDT
+    FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
+    WHERE FechaPedido >= @usedFrom
+      AND FechaPedido < DATEADD(DAY, 1, @usedTo)
+      AND ( @search IS NULL OR @search = ''
+            OR Pedido      LIKE '%' + @search + '%'
+            OR RefCli      LIKE '%' + @search + '%'
+            OR DescrLinea  LIKE '%' + @search + '%'
+            OR CodDet      LIKE '%' + @search + '%'
+            OR DescDet     LIKE '%' + @search + '%'
+            OR RazonSocial LIKE '%' + @search + '%'
+          )
+  ) b
+  ORDER BY b.EventDT DESC
+  OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
+END
+ELSE
+BEGIN
+  SELECT
+    @usedFrom AS usedFrom,
+    @usedTo   AS usedTo,
+    COUNT(*)  AS total,
+    ISNULL(SUM(CAST(TotPiezas AS float)), 0)       AS piezas,
+    ISNULL(SUM(CAST(PiezasLinea AS float)), 0)     AS piezasLinea,
+    ISNULL(SUM(CAST(PiezasDet AS float)), 0)       AS piezasDet
+  FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
+  WHERE FechaEntrega >= @usedFrom
+    AND FechaEntrega < DATEADD(DAY, 1, @usedTo)
+    AND ( @search IS NULL OR @search = ''
+          OR Pedido      LIKE '%' + @search + '%'
+          OR RefCli      LIKE '%' + @search + '%'
+          OR DescrLinea  LIKE '%' + @search + '%'
+          OR CodDet      LIKE '%' + @search + '%'
+          OR DescDet     LIKE '%' + @search + '%'
+          OR RazonSocial LIKE '%' + @search + '%'
+        );
+
+  SELECT *
+  FROM (
+    SELECT
+      *,
+      FechaEntrega AS EventDT
+    FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
+    WHERE FechaEntrega >= @usedFrom
+      AND FechaEntrega < DATEADD(DAY, 1, @usedTo)
+      AND ( @search IS NULL OR @search = ''
+            OR Pedido      LIKE '%' + @search + '%'
+            OR RefCli      LIKE '%' + @search + '%'
+            OR DescrLinea  LIKE '%' + @search + '%'
+            OR CodDet      LIKE '%' + @search + '%'
+            OR DescDet     LIKE '%' + @search + '%'
+            OR RazonSocial LIKE '%' + @search + '%'
+          )
+  ) b
+  ORDER BY b.EventDT DESC
+  OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
+END
+    `;
+
+    const result = await request.query(query);
+    const meta  = result.recordsets?.[0]?.[0] || { total: 0, piezas: 0, piezasLinea: 0, piezasDet: 0, usedFrom: fromParam, usedTo: toParam };
+    const items = result.recordsets?.[1] || [];
+
+    console.log(`✅ /barcoder-order OK page=${pageNum} size=${sizeNum} total=${meta.total} items=${items.length} usedFrom=${meta.usedFrom} usedTo=${meta.usedTo}`);
+
+    return res.json({
+      items,
+      page: pageNum,
+      pageSize: sizeNum,
+      total: meta.total,
+      from: fromParam,
+      to: toParam,
+      usedFrom: meta.usedFrom,
+      usedTo: meta.usedTo,
+      orderBy: 'EventDT',
+      orderDir: 'DESC',
+      agg: { piezas: meta.piezas, piezasLinea: meta.piezasLinea, piezasDet: meta.piezasDet }
+    });
+
+  } catch (err) {
+    console.error('❌ ERROR EN /control-optima/barcoder-order:', err);
+    return res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+
+
 
 module.exports = router;
