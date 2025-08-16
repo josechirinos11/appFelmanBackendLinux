@@ -749,407 +749,306 @@ ORDER BY InicioProceso DESC, Pedido, CodProceso;`;
 
 
 
-
-
-// ------------- Helpers de fechas y params -------------
-function buildDateDefaults(from, to) {
-  const today = new Date();
-  const pad = (n) => (n < 10 ? "0" + n : "" + n);
-  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const defTo = fmt(today);
-  const d30 = new Date(today); d30.setDate(d30.getDate() - 30);
-  const defFrom = fmt(d30);
-
-  return {
-    fromParam: (typeof from === "string" && from.trim()) ? from : defFrom,
-    toParam:   (typeof to === "string"   && to.trim())   ? to   : defTo,
-  };
-}
-
-function normStr(s) { return (typeof s === "string" ? s.trim() : ""); }
-
-// ------------- 1) Máquinas activas en rango -------------
-router.get("/tom/maquinas", async (req, res) => {
-  const { from, to } = req.query;
-  const { fromParam, toParam } = buildDateDefaults(from, to);
-
-  try {
-    const pool = await poolPromise;
-    const result = await pool.request()
-      .input("from", sql.Date, fromParam)
-      .input("to",   sql.Date, toParam)
-      .query(`
-DECLARE @ini DATETIME = DATEADD(DAY, DATEDIFF(DAY, 0, @from), 0);
-DECLARE @fin DATETIME = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @to), 0)));
-
-SELECT DISTINCT QH.CDL_NAME AS Maquina
-FROM dbo.QUEUEWORK AS QW
-JOIN dbo.QUEUEHEADER AS QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-WHERE QW.ID_QUEUEREASON IN (1,2)
-  AND QW.ID_QUEUEREASON_COMPLETE = 20
-  AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
-  AND QH.CDL_NAME IS NOT NULL AND LTRIM(RTRIM(QH.CDL_NAME)) <> ''
-ORDER BY 1;
-      `);
-
-    return res.json({ status: "ok", from: fromParam, to: toParam, rows: result.recordset });
-  } catch (err) {
-    console.error("❌ /tom/maquinas:", err);
-    return res.status(500).json({ status: "error", message: err.message });
-  }
-});
-
-// ------------- 2) Operarios activos en rango -------------
-router.get("/tom/operarios", async (req, res) => {
-  const { from, to } = req.query;
-  const { fromParam, toParam } = buildDateDefaults(from, to);
-
-  try {
-    const pool = await poolPromise;
-    const result = await pool.request()
-      .input("from", sql.Date, fromParam)
-      .input("to",   sql.Date, toParam)
-      .query(`
-DECLARE @ini DATETIME = DATEADD(DAY, DATEDIFF(DAY, 0, @from), 0);
-DECLARE @fin DATETIME = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @to), 0)));
-
-SELECT DISTINCT QW.[USERNAME] AS Operario
-FROM dbo.QUEUEWORK AS QW
-WHERE QW.ID_QUEUEREASON IN (1,2)
-  AND QW.ID_QUEUEREASON_COMPLETE = 20
-  AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
-  AND QW.[USERNAME] IS NOT NULL AND LTRIM(RTRIM(QW.[USERNAME])) <> ''
-ORDER BY 1;
-      `);
-
-    return res.json({ status: "ok", from: fromParam, to: toParam, rows: result.recordset });
-  } catch (err) {
-    console.error("❌ /tom/operarios:", err);
-    return res.status(500).json({ status: "error", message: err.message });
-  }
-});
-
-// ------------- 3) Relación máquina–operario en rango -------------
-router.get("/tom/relacion", async (req, res) => {
+// ===========================
+// CONTROL-OPTIMA · QW REPORTS
+// ===========================
+router.get("/qw/machines", async (req, res) => {
   const { from, to, maquina, operario } = req.query;
-  const { fromParam, toParam } = buildDateDefaults(from, to);
-  const maq = normStr(maquina);
-  const op  = normStr(operario);
-
   try {
     const pool = await poolPromise;
-    const r = await pool.request()
-      .input("from",     sql.Date, fromParam)
-      .input("to",       sql.Date, toParam)
-      .input("maquina",  sql.NVarChar, maq)
-      .input("operario", sql.NVarChar, op)
-      .query(`
-DECLARE @ini DATETIME = DATEADD(DAY, DATEDIFF(DAY, 0, @from), 0);
-DECLARE @fin DATETIME = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @to), 0)));
 
-SELECT
-  QH.CDL_NAME   AS Maquina,
-  QW.[USERNAME] AS Operario,
-  COUNT(*)      AS Registros
-FROM dbo.QUEUEWORK AS QW
-JOIN dbo.QUEUEHEADER AS QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-WHERE QW.ID_QUEUEREASON IN (1,2)
-  AND QW.ID_QUEUEREASON_COMPLETE = 20
-  AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
-  AND (@maquina  = '' OR QH.CDL_NAME   = @maquina)
-  AND (@operario = '' OR QW.[USERNAME] = @operario)
-GROUP BY QH.CDL_NAME, QW.[USERNAME]
-ORDER BY Maquina, Operario;
+    const result = await pool.request()
+      .input("from", sql.Date, from || null)
+      .input("to", sql.Date, to || null)
+      .input("maquina", sql.NVarChar(100), maquina || null)
+      .input("operario", sql.NVarChar(100), operario || null)
+      .query(`
+        SET NOCOUNT ON;
+        DECLARE @fromDate date = @from, @toDate date = @to;
+        DECLARE @ini datetime = CASE WHEN @fromDate IS NULL THEN DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1) ELSE DATEADD(DAY, DATEDIFF(DAY, 0, @fromDate), 0) END;
+        DECLARE @fin datetime = CASE WHEN @toDate   IS NULL THEN GETDATE() ELSE DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @toDate), 0))) END;
+
+        WITH Q AS (
+          SELECT
+            QH.CDL_NAME AS Maquina,
+            QW.[USERNAME] AS Operario,
+            DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
+          FROM dbo.QUEUEWORK QW
+          JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+          WHERE QW.ID_QUEUEREASON IN (1,2)
+            AND QW.ID_QUEUEREASON_COMPLETE = 20
+            AND QW.DATESTART IS NOT NULL AND QW.DATEEND IS NOT NULL
+            AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
+            AND (@maquina  IS NULL OR QH.CDL_NAME = @maquina)
+            AND (@operario IS NULL OR QW.[USERNAME] = @operario)
+        )
+        SELECT Maquina, COUNT(*) AS Registros, SUM(Segundos) AS Segundos
+        FROM Q
+        GROUP BY Maquina
+        ORDER BY Registros DESC, Maquina;
       `);
 
-    return res.json({ status: "ok", from: fromParam, to: toParam, rows: r.recordset });
+    res.setHeader("Content-Type", "application/json");
+    res.json({ ok: true, data: result.recordset });
   } catch (err) {
-    console.error("❌ /tom/relacion:", err);
-    return res.status(500).json({ status: "error", message: err.message });
+    res.status(500).json({ ok: false, error: String(err) });
   }
 });
 
-// ------------- 4) Detalle crudo por operario -------------
-router.get("/tom/detalle", async (req, res) => {
-  const { from, to, operario, maquina, search = "", page = "1", pageSize = "50" } = req.query;
-  const { fromParam, toParam } = buildDateDefaults(from, to);
-  const op = normStr(operario);
-  const mq = normStr(maquina);
-  const srch = normStr(search);
-  const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const sizeNum = Math.min(500, Math.max(1, parseInt(pageSize, 10) || 50));
-  const offset = (pageNum - 1) * sizeNum;
-
+router.get("/qw/operators", async (req, res) => {
+  const { from, to, maquina, operario } = req.query;
   try {
     const pool = await poolPromise;
-    const req1 = pool.request()
-      .input("from", sql.Date, fromParam)
-      .input("to", sql.Date, toParam)
-      .input("operario", sql.NVarChar, op)
-      .input("maquina", sql.NVarChar, mq)
-      .input("search", sql.NVarChar, srch)
-      .input("offset", sql.Int, offset)
-      .input("pageSize", sql.Int, sizeNum);
 
-    const q = `
-DECLARE @ini DATETIME = DATEADD(DAY, DATEDIFF(DAY, 0, @from), 0);
-DECLARE @fin DATETIME = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @to), 0)));
-
-WITH Q AS (
-  SELECT
-    O.ID_ORDINI   AS IdPedido,
-    O.RIF         AS Pedido,
-    OM.RIGA       AS Linea,
-    QH.CDL_NAME   AS Maquina,
-    QW.[USERNAME] AS Operario,
-    WK.CODICE     AS CodProceso,
-    WK.DESCRIZIONE AS DescProceso,
-    QW.DATESTART  AS DateStart,
-    QW.DATEEND    AS DateEnd,
-    DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
-  FROM dbo.QUEUEWORK QW
-  JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-  JOIN dbo.WORKKIND WK    ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-  JOIN dbo.ORDMAST OM     ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-  JOIN dbo.ORDINI  O      ON O.ID_ORDINI       = OM.ID_ORDINI
-  LEFT JOIN dbo.PERSONE P ON P.ID_PERSONE      = O.ID_PERSONE
-  WHERE QW.ID_QUEUEREASON IN (1,2)
-    AND QW.ID_QUEUEREASON_COMPLETE = 20
-    AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
-    AND (@operario = '' OR QW.[USERNAME] = @operario)
-    AND (@maquina  = '' OR QH.CDL_NAME   = @maquina)
-    AND (
-      @search = '' OR
-      O.RIF LIKE '%' + @search + '%' OR
-      WK.CODICE LIKE '%' + @search + '%' OR
-      WK.DESCRIZIONE LIKE '%' + @search + '%' OR
-      QH.CDL_NAME LIKE '%' + @search + '%' OR
-      QW.[USERNAME] LIKE '%' + @search + '%'
-    )
-)
-SELECT COUNT(1) AS total FROM Q;
-
-WITH Q AS (
-  SELECT
-    O.ID_ORDINI   AS IdPedido,
-    O.RIF         AS Pedido,
-    OM.RIGA       AS Linea,
-    QH.CDL_NAME   AS Maquina,
-    QW.[USERNAME] AS Operario,
-    WK.CODICE     AS CodProceso,
-    WK.DESCRIZIONE AS DescProceso,
-    QW.DATESTART  AS DateStart,
-    QW.DATEEND    AS DateEnd,
-    DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
-  FROM dbo.QUEUEWORK QW
-  JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-  JOIN dbo.WORKKIND WK    ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-  JOIN dbo.ORDMAST OM     ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-  JOIN dbo.ORDINI  O      ON O.ID_ORDINI       = OM.ID_ORDINI
-  LEFT JOIN dbo.PERSONE P ON P.ID_PERSONE      = O.ID_PERSONE
-  WHERE QW.ID_QUEUEREASON IN (1,2)
-    AND QW.ID_QUEUEREASON_COMPLETE = 20
-    AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
-    AND (@operario = '' OR QW.[USERNAME] = @operario)
-    AND (@maquina  = '' OR QH.CDL_NAME   = @maquina)
-    AND (
-      @search = '' OR
-      O.RIF LIKE '%' + @search + '%' OR
-      WK.CODICE LIKE '%' + @search + '%' OR
-      WK.DESCRIZIONE LIKE '%' + @search + '%' OR
-      QH.CDL_NAME LIKE '%' + @search + '%' OR
-      QW.[USERNAME] LIKE '%' + @search + '%'
-    )
-)
-SELECT *
-FROM Q
-ORDER BY DateStart DESC, Pedido, Linea
-OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
-    `;
-
-    const r = await req1.query(q);
-    const total = r.recordsets[0]?.[0]?.total ?? 0;
-    const rows  = r.recordsets[1] ?? [];
-    return res.json({
-      status: "ok",
-      from: fromParam,
-      to: toParam,
-      page: pageNum,
-      pageSize: sizeNum,
-      total,
-      rows
-    });
-  } catch (err) {
-    console.error("❌ /tom/detalle:", err);
-    return res.status(500).json({ status: "error", message: err.message });
-  }
-});
-
-// ------------- 5) Resumen por operario → pedido -------------
-router.get("/tom/resumen-op-pedido", async (req, res) => {
-  const { from, to, operario, maquina, search = "" } = req.query;
-  const { fromParam, toParam } = buildDateDefaults(from, to);
-  const op = normStr(operario);
-  const mq = normStr(maquina);
-  const srch = normStr(search);
-
-  try {
-    const pool = await poolPromise;
-    const r = await pool.request()
-      .input("from", sql.Date, fromParam)
-      .input("to", sql.Date, toParam)
-      .input("operario", sql.NVarChar, op)
-      .input("maquina", sql.NVarChar, mq)
-      .input("search", sql.NVarChar, srch)
+    const result = await pool.request()
+      .input("from", sql.Date, from || null)
+      .input("to", sql.Date, to || null)
+      .input("maquina", sql.NVarChar(100), maquina || null)
+      .input("operario", sql.NVarChar(100), operario || null)
       .query(`
-DECLARE @ini DATETIME = DATEADD(DAY, DATEDIFF(DAY, 0, @from), 0);
-DECLARE @fin DATETIME = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @to), 0)));
+        SET NOCOUNT ON;
+        DECLARE @fromDate date = @from, @toDate date = @to;
+        DECLARE @ini datetime = CASE WHEN @fromDate IS NULL THEN DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1) ELSE DATEADD(DAY, DATEDIFF(DAY, 0, @fromDate), 0) END;
+        DECLARE @fin datetime = CASE WHEN @toDate   IS NULL THEN GETDATE() ELSE DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @toDate), 0))) END;
 
-WITH Q AS (
-  SELECT
-    O.ID_ORDINI   AS IdPedido,
-    O.RIF         AS Pedido,
-    OM.RIGA       AS Linea,
-    QH.CDL_NAME   AS Maquina,
-    QW.[USERNAME] AS Operario,
-    WK.CODICE     AS CodProceso,
-    WK.DESCRIZIONE AS DescProceso,
-    QW.DATESTART  AS DateStart,
-    QW.DATEEND    AS DateEnd,
-    DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
-  FROM dbo.QUEUEWORK QW
-  JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-  JOIN dbo.WORKKIND WK    ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-  JOIN dbo.ORDMAST OM     ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-  JOIN dbo.ORDINI  O      ON O.ID_ORDINI       = OM.ID_ORDINI
-  LEFT JOIN dbo.PERSONE P ON P.ID_PERSONE      = O.ID_PERSONE
-  WHERE QW.ID_QUEUEREASON IN (1,2)
-    AND QW.ID_QUEUEREASON_COMPLETE = 20
-    AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
-    AND (@operario = '' OR QW.[USERNAME] = @operario)
-    AND (@maquina  = '' OR QH.CDL_NAME   = @maquina)
-    AND (
-      @search = '' OR
-      O.RIF LIKE '%' + @search + '%' OR
-      WK.CODICE LIKE '%' + @search + '%' OR
-      WK.DESCRIZIONE LIKE '%' + @search + '%' OR
-      QH.CDL_NAME LIKE '%' + @search + '%' OR
-      QW.[USERNAME] LIKE '%' + @search + '%'
-    )
-),
-D AS (
-  SELECT *,
-         ROW_NUMBER() OVER(
-           PARTITION BY IdPedido, Linea, Maquina, DateStart, DateEnd
-           ORDER BY CodProceso
-         ) AS rn
-  FROM Q
-)
-SELECT
-  D.Operario,
-  D.Pedido,
-  D.IdPedido,
-  MIN(D.DateStart) AS Inicio,
-  MAX(D.DateEnd)   AS Fin,
-  SUM(D.Segundos)  AS SegundosBrutos,
-  SUM(CASE WHEN D.rn = 1 THEN D.Segundos ELSE 0 END) AS SegundosUnicos,
-  CONVERT(VARCHAR(8), DATEADD(SECOND, SUM(CASE WHEN D.rn=1 THEN D.Segundos ELSE 0 END), 0), 108) AS TiempoUnicoHHMMSS,
-  STUFF((SELECT DISTINCT ',' + D2.Maquina FROM D D2 WHERE D2.Operario=D.Operario AND D2.IdPedido=D.IdPedido FOR XML PATH(''),TYPE).value('.','nvarchar(max)'),1,1,'') AS Maquinas,
-  STUFF((SELECT DISTINCT ',' + D3.CodProceso FROM D D3 WHERE D3.Operario=D.Operario AND D3.IdPedido=D.IdPedido FOR XML PATH(''),TYPE).value('.','nvarchar(max)'),1,1,'') AS Procesos
-FROM D
-GROUP BY D.Operario, D.Pedido, D.IdPedido
-ORDER BY Operario, Inicio DESC;
+        WITH Q AS (
+          SELECT
+            QH.CDL_NAME AS Maquina,
+            QW.[USERNAME] AS Operario,
+            DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
+          FROM dbo.QUEUEWORK QW
+          JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+          WHERE QW.ID_QUEUEREASON IN (1,2)
+            AND QW.ID_QUEUEREASON_COMPLETE = 20
+            AND QW.DATESTART IS NOT NULL AND QW.DATEEND IS NOT NULL
+            AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
+            AND (@maquina  IS NULL OR QH.CDL_NAME = @maquina)
+            AND (@operario IS NULL OR QW.[USERNAME] = @operario)
+        )
+        SELECT Operario, COUNT(*) AS Registros, SUM(Segundos) AS Segundos
+        FROM Q
+        GROUP BY Operario
+        ORDER BY Registros DESC, Operario;
       `);
 
-    return res.json({ status: "ok", from: fromParam, to: toParam, rows: r.recordset });
+    res.setHeader("Content-Type", "application/json");
+    res.json({ ok: true, data: result.recordset });
   } catch (err) {
-    console.error("❌ /tom/resumen-op-pedido:", err);
-    return res.status(500).json({ status: "error", message: err.message });
+    res.status(500).json({ ok: false, error: String(err) });
   }
 });
 
-// ------------- 6) Resumen por operario → máquina/proceso -------------
-router.get("/tom/resumen-op-mproc", async (req, res) => {
-  const { from, to, operario, maquina, search = "" } = req.query;
-  const { fromParam, toParam } = buildDateDefaults(from, to);
-  const op = normStr(operario);
-  const mq = normStr(maquina);
-  const srch = normStr(search);
-
+router.get("/qw/matrix", async (req, res) => {
+  const { from, to, maquina, operario } = req.query;
   try {
     const pool = await poolPromise;
-    const r = await pool.request()
-      .input("from", sql.Date, fromParam)
-      .input("to", sql.Date, toParam)
-      .input("operario", sql.NVarChar, op)
-      .input("maquina", sql.NVarChar, mq)
-      .input("search", sql.NVarChar, srch)
-      .query(`
-DECLARE @ini DATETIME = DATEADD(DAY, DATEDIFF(DAY, 0, @from), 0);
-DECLARE @fin DATETIME = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @to), 0)));
 
-WITH Q AS (
-  SELECT
-    QW.[USERNAME] AS Operario,
-    QH.CDL_NAME   AS Maquina,
-    WK.CODICE     AS CodProceso,
-    WK.DESCRIZIONE AS DescProceso,
-    O.RIF         AS Pedido,
-    QW.DATESTART  AS DateStart,
-    QW.DATEEND    AS DateEnd,
-    DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
-  FROM dbo.QUEUEWORK QW
-  JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-  JOIN dbo.WORKKIND WK    ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-  JOIN dbo.ORDMAST OM     ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-  JOIN dbo.ORDINI  O      ON O.ID_ORDINI       = OM.ID_ORDINI
-  WHERE QW.ID_QUEUEREASON IN (1,2)
-    AND QW.ID_QUEUEREASON_COMPLETE = 20
-    AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
-    AND (@operario = '' OR QW.[USERNAME] = @operario)
-    AND (@maquina  = '' OR QH.CDL_NAME   = @maquina)
-    AND (
-      @search = '' OR
-      O.RIF LIKE '%' + @search + '%' OR
-      WK.CODICE LIKE '%' + @search + '%' OR
-      WK.DESCRIZIONE LIKE '%' + @search + '%' OR
-      QH.CDL_NAME LIKE '%' + @search + '%' OR
-      QW.[USERNAME] LIKE '%' + @search + '%'
-    )
-),
-D AS (
-  SELECT *,
-         ROW_NUMBER() OVER(
-           PARTITION BY Operario, Maquina, CodProceso, DateStart, DateEnd
-           ORDER BY Pedido
-         ) AS rn
-  FROM Q
-)
-SELECT
-  Operario,
-  Maquina,
-  CodProceso,
-  DescProceso,
-  COUNT(*) AS Registros,
-  SUM(Segundos) AS SegundosBrutos,
-  SUM(CASE WHEN rn=1 THEN Segundos ELSE 0 END) AS SegundosUnicos,
-  CONVERT(VARCHAR(8), DATEADD(SECOND, SUM(CASE WHEN rn=1 THEN Segundos ELSE 0 END), 0), 108) AS TiempoUnicoHHMMSS
-FROM D
-GROUP BY Operario, Maquina, CodProceso, DescProceso
-ORDER BY Operario, Maquina, CodProceso;
+    const result = await pool.request()
+      .input("from", sql.Date, from || null)
+      .input("to", sql.Date, to || null)
+      .input("maquina", sql.NVarChar(100), maquina || null)
+      .input("operario", sql.NVarChar(100), operario || null)
+      .query(`
+        SET NOCOUNT ON;
+        DECLARE @fromDate date = @from, @toDate date = @to;
+        DECLARE @ini datetime = CASE WHEN @fromDate IS NULL THEN DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1) ELSE DATEADD(DAY, DATEDIFF(DAY, 0, @fromDate), 0) END;
+        DECLARE @fin datetime = CASE WHEN @toDate   IS NULL THEN GETDATE() ELSE DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @toDate), 0))) END;
+
+        WITH Q AS (
+          SELECT
+            QH.CDL_NAME AS Maquina,
+            QW.[USERNAME] AS Operario,
+            DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
+          FROM dbo.QUEUEWORK QW
+          JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+          WHERE QW.ID_QUEUEREASON IN (1,2)
+            AND QW.ID_QUEUEREASON_COMPLETE = 20
+            AND QW.DATESTART IS NOT NULL AND QW.DATEEND IS NOT NULL
+            AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
+            AND (@maquina  IS NULL OR QH.CDL_NAME = @maquina)
+            AND (@operario IS NULL OR QW.[USERNAME] = @operario)
+        )
+        SELECT Maquina, Operario, COUNT(*) AS Registros, SUM(Segundos) AS Segundos
+        FROM Q
+        GROUP BY Maquina, Operario
+        ORDER BY Maquina, Operario;
       `);
 
-    return res.json({ status: "ok", from: fromParam, to: toParam, rows: r.recordset });
+    res.setHeader("Content-Type", "application/json");
+    res.json({ ok: true, data: result.recordset });
   } catch (err) {
-    console.error("❌ /tom/resumen-op-mproc:", err);
-    return res.status(500).json({ status: "error", message: err.message });
+    res.status(500).json({ ok: false, error: String(err) });
   }
 });
 
+router.get("/qw/operario/raw", async (req, res) => {
+  const { from, to, operario, maquina } = req.query;
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input("from", sql.Date, from || null)
+      .input("to", sql.Date, to || null)
+      .input("operario", sql.NVarChar(100), operario || null)
+      .input("maquina", sql.NVarChar(100), maquina || null)
+      .query(`
+        SET NOCOUNT ON;
+        DECLARE @fromDate date = @from, @toDate date = @to;
+        DECLARE @ini datetime = CASE WHEN @fromDate IS NULL THEN DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1) ELSE DATEADD(DAY, DATEDIFF(DAY, 0, @fromDate), 0) END;
+        DECLARE @fin datetime = CASE WHEN @toDate   IS NULL THEN GETDATE() ELSE DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @toDate), 0))) END;
 
+        WITH Q AS (
+          SELECT
+            O.ID_ORDINI AS IdPedido, O.RIF AS Pedido, OM.RIGA AS Linea,
+            QH.CDL_NAME AS Maquina, QW.[USERNAME] AS Operario,
+            WK.CODICE AS CodProceso, WK.DESCRIZIONE AS DescProceso,
+            QW.DATESTART AS DateStart, QW.DATEEND AS DateEnd,
+            DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
+          FROM dbo.QUEUEWORK QW
+          JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+          JOIN dbo.WORKKIND WK    ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+          JOIN dbo.ORDMAST OM     ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+          JOIN dbo.ORDINI  O      ON O.ID_ORDINI       = OM.ID_ORDINI
+          WHERE QW.ID_QUEUEREASON IN (1,2)
+            AND QW.ID_QUEUEREASON_COMPLETE = 20
+            AND QW.DATESTART IS NOT NULL AND QW.DATEEND IS NOT NULL
+            AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
+            AND (@operario IS NULL OR QW.[USERNAME] = @operario)
+            AND (@maquina  IS NULL OR QH.CDL_NAME = @maquina)
+        )
+        SELECT Pedido, IdPedido, Linea, Maquina, CodProceso, DescProceso, Operario,
+               CONVERT(varchar(23), DateStart, 121) AS DateStart,
+               CONVERT(varchar(23), DateEnd, 121)   AS DateEnd,
+               Segundos
+        FROM Q
+        ORDER BY DateStart DESC, Pedido, Linea, CodProceso;
+      `);
 
+    res.setHeader("Content-Type", "application/json");
+    res.json({ ok: true, data: result.recordset });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
 
+router.get("/qw/operario/resumen-pedidos", async (req, res) => {
+  const { from, to, operario, maquina } = req.query;
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input("from", sql.Date, from || null)
+      .input("to", sql.Date, to || null)
+      .input("operario", sql.NVarChar(100), operario || null)
+      .input("maquina", sql.NVarChar(100), maquina || null)
+      .query(`
+        SET NOCOUNT ON;
+        DECLARE @fromDate date = @from, @toDate date = @to;
+        DECLARE @ini datetime = CASE WHEN @fromDate IS NULL THEN DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1) ELSE DATEADD(DAY, DATEDIFF(DAY, 0, @fromDate), 0) END;
+        DECLARE @fin datetime = CASE WHEN @toDate   IS NULL THEN GETDATE() ELSE DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @toDate), 0))) END;
 
+        WITH Q AS (
+          SELECT
+            O.ID_ORDINI AS IdPedido, O.RIF AS Pedido, OM.RIGA AS Linea,
+            QH.CDL_NAME AS Maquina, QW.[USERNAME] AS Operario,
+            WK.CODICE AS CodProceso, WK.DESCRIZIONE AS DescProceso,
+            QW.DATESTART AS DateStart, QW.DATEEND AS DateEnd,
+            DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
+          FROM dbo.QUEUEWORK QW
+          JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+          JOIN dbo.WORKKIND WK    ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+          JOIN dbo.ORDMAST OM     ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+          JOIN dbo.ORDINI  O      ON O.ID_ORDINI       = OM.ID_ORDINI
+          WHERE QW.ID_QUEUEREASON IN (1,2)
+            AND QW.ID_QUEUEREASON_COMPLETE = 20
+            AND QW.DATESTART IS NOT NULL AND QW.DATEEND IS NOT NULL
+            AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
+            AND (@operario IS NULL OR QW.[USERNAME] = @operario)
+            AND (@maquina  IS NULL OR QH.CDL_NAME = @maquina)
+        ),
+        D AS (
+          SELECT *,
+                 ROW_NUMBER() OVER(
+                   PARTITION BY IdPedido, Linea, Maquina, DateStart, DateEnd
+                   ORDER BY CodProceso
+                 ) AS rn
+          FROM Q
+        )
+        SELECT
+          Operario, Pedido, IdPedido,
+          COUNT(*) AS Registros,
+          SUM(CASE WHEN rn = 1 THEN Segundos ELSE 0 END) AS Segundos,
+          CONVERT(varchar(23), MIN(DateStart), 121) AS Inicio,
+          CONVERT(varchar(23), MAX(DateEnd), 121)   AS Fin
+        FROM D
+        GROUP BY Operario, Pedido, IdPedido
+        ORDER BY Operario, Inicio DESC, Pedido;
+      `);
+
+    res.setHeader("Content-Type", "application/json");
+    res.json({ ok: true, data: result.recordset });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+router.get("/qw/operario/resumen-maquina-proceso", async (req, res) => {
+  const { from, to, operario, maquina } = req.query;
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input("from", sql.Date, from || null)
+      .input("to", sql.Date, to || null)
+      .input("operario", sql.NVarChar(100), operario || null)
+      .input("maquina", sql.NVarChar(100), maquina || null)
+      .query(`
+        SET NOCOUNT ON;
+        DECLARE @fromDate date = @from, @toDate date = @to;
+        DECLARE @ini datetime = CASE WHEN @fromDate IS NULL THEN DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1) ELSE DATEADD(DAY, DATEDIFF(DAY, 0, @fromDate), 0) END;
+        DECLARE @fin datetime = CASE WHEN @toDate   IS NULL THEN GETDATE() ELSE DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @toDate), 0))) END;
+
+        WITH Q AS (
+          SELECT
+            O.ID_ORDINI AS IdPedido, O.RIF AS Pedido, OM.RIGA AS Linea,
+            QH.CDL_NAME AS Maquina, QW.[USERNAME] AS Operario,
+            WK.CODICE AS CodProceso, WK.DESCRIZIONE AS DescProceso,
+            QW.DATESTART AS DateStart, QW.DATEEND AS DateEnd,
+            DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
+          FROM dbo.QUEUEWORK QW
+          JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+          JOIN dbo.WORKKIND WK    ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+          JOIN dbo.ORDMAST OM     ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+          JOIN dbo.ORDINI  O      ON O.ID_ORDINI       = OM.ID_ORDINI
+          WHERE QW.ID_QUEUEREASON IN (1,2)
+            AND QW.ID_QUEUEREASON_COMPLETE = 20
+            AND QW.DATESTART IS NOT NULL AND QW.DATEEND IS NOT NULL
+            AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
+            AND (@operario IS NULL OR QW.[USERNAME] = @operario)
+            AND (@maquina  IS NULL OR QH.CDL_NAME = @maquina)
+        ),
+        D AS (
+          SELECT *,
+                 ROW_NUMBER() OVER(
+                   PARTITION BY IdPedido, Linea, Maquina, DateStart, DateEnd
+                   ORDER BY CodProceso
+                 ) AS rn
+          FROM Q
+        )
+        SELECT
+          Operario, Maquina, CodProceso, DescProceso,
+          COUNT(*) AS Registros,
+          SUM(CASE WHEN rn = 1 THEN Segundos ELSE 0 END) AS Segundos,
+          CONVERT(varchar(23), MIN(DateStart), 121) AS Inicio,
+          CONVERT(varchar(23), MAX(DateEnd), 121)   AS Fin
+        FROM D
+        GROUP BY Operario, Maquina, CodProceso, DescProceso
+        ORDER BY Operario, Maquina, Segundos DESC;
+      `);
+
+    res.setHeader("Content-Type", "application/json");
+    res.json({ ok: true, data: result.recordset });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
 
 
 
