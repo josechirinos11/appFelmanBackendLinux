@@ -602,20 +602,52 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
 
 
 // GET /api/control-optima/terminales?from=2025-01-01&to=2025-12-31
-router.get('/control-optima/terminales', async (req, res) => {
-  const { from, to } = req.query; // YYYY-MM-DD
-  if (!from || !to) return res.status(400).json({ error: 'Parámetros from y to requeridos (YYYY-MM-DD).' });
+// src/routes/controlOptima.routes.js
+// ...
+// Asegúrate de montar este router como: app.use('/api/control-optima', router)
 
-  const pool = await sql.connect(config);
-  const q = `
+router.get('/terminales', async (req, res) => {
+  try {
+    const { from, to } = req.query; // YYYY-MM-DD
+    if (!from || !to) {
+      return res.status(400).json({ error: 'Parámetros "from" y "to" requeridos (YYYY-MM-DD).' });
+    }
+
+    const pool = await poolPromise;
+
+    const q = `
 DECLARE @from date = @p_from, @to date = @p_to;
 DECLARE @ini datetime = DATEADD(DAY, DATEDIFF(DAY, 0, @from), 0);
 DECLARE @fin datetime = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @to), 0)));
-WITH Q AS ( /* ...igual que arriba (versión Terminales)... */ ),
-D AS ( /* ...igual que arriba... */ )
+
+WITH Q AS (
+  SELECT
+    O.ID_ORDINI AS IdPedido, O.RIF AS Pedido, OM.RIGA AS Linea,
+    QH.CDL_NAME AS Maquina, QW.[USERNAME] AS Operario,
+    WK.CODICE AS CodProceso, WK.DESCRIZIONE AS DescProceso,
+    QW.DATESTART AS DateStart, QW.DATEEND AS DateEnd,
+    DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
+  FROM dbo.QUEUEWORK QW
+  JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+  JOIN dbo.WORKKIND WK    ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+  JOIN dbo.ORDMAST OM     ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+  JOIN dbo.ORDINI  O      ON O.ID_ORDINI       = OM.ID_ORDINI
+  WHERE QW.ID_QUEUEREASON IN (1,2)
+    AND QW.ID_QUEUEREASON_COMPLETE = 20
+    AND QW.DATESTART IS NOT NULL AND QW.DATEEND IS NOT NULL
+    AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
+),
+D AS (
+  SELECT *,
+         ROW_NUMBER() OVER(
+           PARTITION BY IdPedido, Linea, Maquina, DateStart, DateEnd
+           ORDER BY CodProceso
+         ) AS rn
+  FROM Q
+)
 SELECT
   D.Pedido, D.IdPedido,
-  P.DESCR1 AS Cliente,
+  P.DESCR1      AS Cliente,
   O.DESCR1_SPED AS NombrePedido,
   MIN(D.DateStart) AS Inicio,
   MAX(D.DateEnd)   AS Fin,
@@ -633,26 +665,55 @@ JOIN dbo.PERSONE P ON P.ID_PERSONE = O.ID_PERSONE
 GROUP BY D.Pedido, D.IdPedido, P.DESCR1, O.DESCR1_SPED
 ORDER BY Inicio DESC;`;
 
-  const result = await pool.request()
-    .input('p_from', sql.Date, from)
-    .input('p_to',   sql.Date, to)
-    .query(q);
+    const result = await pool.request()
+      .input('p_from', sql.Date, from)
+      .input('p_to',   sql.Date, to)
+      .query(q);
 
-  res.json(result.recordset);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('❌ /terminales:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// GET /api/control-optima/operarios?from=2025-01-01&to=2025-12-31
-router.get('/control-optima/operarios', async (req, res) => {
-  const { from, to } = req.query;
-  if (!from || !to) return res.status(400).json({ error: 'Parámetros from y to requeridos (YYYY-MM-DD).' });
+router.get('/operarios', async (req, res) => {
+  try {
+    const { from, to } = req.query; // YYYY-MM-DD
+    if (!from || !to) {
+      return res.status(400).json({ error: 'Parámetros "from" y "to" requeridos (YYYY-MM-DD).' });
+    }
 
-  const pool = await sql.connect(config);
-  const q = `
+    const pool = await poolPromise;
+
+    const q = `
 DECLARE @from date = @p_from, @to date = @p_to;
 DECLARE @ini datetime = DATEADD(DAY, DATEDIFF(DAY, 0, @from), 0);
 DECLARE @fin datetime = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @to), 0)));
-WITH Q AS ( /* ...igual que arriba (versión Operarios)... */ ),
-D AS ( /* ...igual que arriba... */ )
+WITH Q AS (
+  SELECT
+    O.ID_ORDINI AS IdPedido, O.RIF AS Pedido, OM.RIGA AS Linea,
+    QH.CDL_NAME AS Maquina, WK.CODICE AS CodProceso, WK.DESCRIZIONE AS DescProceso,
+    QW.[USERNAME] AS Operario, QW.DATESTART AS DateStart, QW.DATEEND AS DateEnd,
+    DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
+  FROM dbo.QUEUEWORK QW
+  JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+  JOIN dbo.WORKKIND WK    ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+  JOIN dbo.ORDMAST OM     ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+  JOIN dbo.ORDINI  O      ON O.ID_ORDINI       = OM.ID_ORDINI
+  WHERE QW.ID_QUEUEREASON IN (1,2)
+    AND QW.ID_QUEUEREASON_COMPLETE = 20
+    AND QW.DATESTART IS NOT NULL AND QW.DATEEND IS NOT NULL
+    AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
+),
+D AS (
+  SELECT *,
+         ROW_NUMBER() OVER(
+           PARTITION BY IdPedido, Linea, Maquina, DateStart, DateEnd
+           ORDER BY CodProceso
+         ) AS rn
+  FROM Q
+)
 SELECT
   Pedido, IdPedido, Linea,
   CodProceso, DescProceso, Maquina,
@@ -669,12 +730,16 @@ FROM D
 GROUP BY Pedido, IdPedido, Linea, CodProceso, DescProceso, Maquina
 ORDER BY InicioProceso DESC, Pedido, CodProceso;`;
 
-  const result = await pool.request()
-    .input('p_from', sql.Date, from)
-    .input('p_to',   sql.Date, to)
-    .query(q);
+    const result = await pool.request()
+      .input('p_from', sql.Date, from)
+      .input('p_to',   sql.Date, to)
+      .query(q);
 
-  res.json(result.recordset);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('❌ /operarios:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 
