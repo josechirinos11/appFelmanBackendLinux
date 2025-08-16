@@ -688,6 +688,85 @@ ORDER BY Inicio DESC;
 });
 
 
+// === OPERARIOS: tiempos por pedido/proceso (sin doble conteo) ==================
+router.get('/operarios', async (req, res) => {
+  const { from, to } = req.query;
+  // defaults: últimos 30 días
+  const today = new Date();
+  const pad = (n) => (n < 10 ? '0' + n : '' + n);
+  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const defTo = fmt(today);
+  const d30 = new Date(today); d30.setDate(d30.getDate() - 30);
+  const defFrom = fmt(d30);
+
+  const fromParam = (typeof from === 'string' && from.trim()) ? from : defFrom;
+  const toParam   = (typeof to   === 'string' && to.trim())   ? to   : defTo;
+
+  try {
+    const pool = await poolPromise;
+    const rq = pool.request()
+      .input('from', sql.Date, fromParam)
+      .input('to',   sql.Date, toParam);
+
+    const query = `
+DECLARE @ini DATETIME = @from;
+DECLARE @fin DATETIME = DATEADD(DAY, 1, @to);
+
+WITH Q AS (
+  SELECT
+    O.ID_ORDINI                  AS IdPedido,
+    O.RIF                        AS Pedido,
+    OM.RIGA                      AS Linea,
+    QH.CDL_NAME                  AS Maquina,
+    WK.CODICE                    AS CodProceso,
+    WK.DESCRIZIONE               AS DescProceso,
+    QW.USERNAME                  AS Operario,
+    QW.DATESTART                 AS DateStart,
+    QW.DATEEND                   AS DateEnd,
+    DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
+  FROM dbo.QUEUEWORK  QW
+  JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+  JOIN dbo.WORKKIND    WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+  JOIN dbo.ORDMAST     OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+  JOIN dbo.ORDINI       O ON O.ID_ORDINI       = OM.ID_ORDINI
+  WHERE QW.ID_QUEUEREASON IN (1,2)
+    AND QW.ID_QUEUEREASON_COMPLETE = 20
+    AND QW.DATESTART IS NOT NULL AND QW.DATEEND IS NOT NULL
+    AND QW.DATESTART >= @ini AND QW.DATEEND < @fin
+),
+D AS (
+  SELECT *,
+         ROW_NUMBER() OVER(
+           PARTITION BY IdPedido, Linea, Maquina, DateStart, DateEnd
+           ORDER BY CodProceso
+         ) AS rn
+  FROM Q
+)
+SELECT
+  Pedido, IdPedido, Linea,
+  CodProceso, DescProceso, Maquina,
+  STUFF((
+    SELECT DISTINCT ',' + D2.Operario
+    FROM D D2
+    WHERE D2.IdPedido=D.IdPedido AND D2.CodProceso=D.CodProceso
+    FOR XML PATH(''),TYPE).value('.','nvarchar(max)'),1,1,'') AS Operarios,
+  COUNT(*) AS Registros,
+  SUM(CASE WHEN rn=1 THEN Segundos ELSE 0 END) AS SegundosProceso,
+  CONVERT(varchar(8), DATEADD(SECOND, SUM(CASE WHEN rn=1 THEN Segundos ELSE 0 END), 0), 108) AS TiempoHHMMSS,
+  MIN(DateStart) AS InicioProceso,
+  MAX(DateEnd)   AS FinProceso
+FROM D
+GROUP BY Pedido, IdPedido, Linea, CodProceso, DescProceso, Maquina
+ORDER BY InicioProceso DESC, Pedido, CodProceso;
+    `;
+
+    const result = await rq.query(query);
+    return res.json(result.recordset);
+  } catch (err) {
+    console.error('❌ ERROR EN /control-optima/operarios:', err);
+    return res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 
 
 module.exports = router;
