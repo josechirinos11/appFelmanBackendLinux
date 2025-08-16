@@ -603,7 +603,89 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
 
 
 
+// === TERMINALES: resumen por pedido (makespan + listados) =====================
+router.get('/terminales', async (req, res) => {
+  const { from, to } = req.query;
+  // defaults: últimos 30 días
+  const today = new Date();
+  const pad = (n) => (n < 10 ? '0' + n : '' + n);
+  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const defTo = fmt(today);
+  const d30 = new Date(today); d30.setDate(d30.getDate() - 30);
+  const defFrom = fmt(d30);
 
+  const fromParam = (typeof from === 'string' && from.trim()) ? from : defFrom;
+  const toParam   = (typeof to   === 'string' && to.trim())   ? to   : defTo;
+
+  try {
+    const pool = await poolPromise;
+    const rq = pool.request()
+      .input('from', sql.Date, fromParam)
+      .input('to',   sql.Date, toParam);
+
+    const query = `
+DECLARE @ini DATETIME = @from;
+DECLARE @fin DATETIME = DATEADD(DAY, 1, @to); -- < @fin incluye todo el día @to
+
+WITH Q AS (
+  SELECT
+    O.ID_ORDINI                  AS IdPedido,
+    O.RIF                        AS Pedido,
+    OM.RIGA                      AS Linea,
+    QH.CDL_NAME                  AS Maquina,
+    QW.USERNAME                  AS Operario,
+    WK.CODICE                    AS CodProceso,
+    WK.DESCRIZIONE               AS DescProceso,
+    QW.DATESTART                 AS DateStart,
+    QW.DATEEND                   AS DateEnd,
+    DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS Segundos
+  FROM dbo.QUEUEWORK  QW
+  JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+  JOIN dbo.WORKKIND    WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+  JOIN dbo.ORDMAST     OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+  JOIN dbo.ORDINI       O ON O.ID_ORDINI       = OM.ID_ORDMAST  -- ojo: si tu PK es ID_ORDINI, usa = OM.ID_ORDINI
+  JOIN dbo.ORDINI       O2 ON O2.ID_ORDINI     = OM.ID_ORDINI   -- línea correcta (ajusta si no existe O2)
+  WHERE QW.ID_QUEUEREASON IN (1,2)
+    AND QW.ID_QUEUEREASON_COMPLETE = 20
+    AND QW.DATESTART IS NOT NULL AND QW.DATEEND IS NOT NULL
+    AND QW.DATESTART >= @ini AND QW.DATEEND < @fin
+),
+D AS (
+  SELECT *,
+         ROW_NUMBER() OVER(
+           PARTITION BY IdPedido, Linea, Maquina, DateStart, DateEnd
+           ORDER BY CodProceso
+         ) AS rn
+  FROM Q
+)
+SELECT
+  D.Pedido, D.IdPedido,
+  P.DESCR1          AS Cliente,
+  O.DESCR1_SPED     AS NombrePedido,
+  MIN(D.DateStart)  AS Inicio,
+  MAX(D.DateEnd)    AS Fin,
+  DATEDIFF(SECOND, MIN(D.DateStart), MAX(D.DateEnd)) AS SegundosMakespan,
+  CONVERT(varchar(8), DATEADD(SECOND, DATEDIFF(SECOND, MIN(D.DateStart), MAX(D.DateEnd)), 0), 108) AS MakespanHHMMSS,
+  SUM(D.Segundos) AS SegundosBrutos,
+  SUM(CASE WHEN D.rn=1 THEN D.Segundos ELSE 0 END) AS SegundosUnicos,
+  CONVERT(varchar(8), DATEADD(SECOND, SUM(CASE WHEN D.rn=1 THEN D.Segundos ELSE 0 END), 0), 108) AS TiempoUnicoHHMMSS,
+  STUFF((SELECT DISTINCT ',' + D2.CodProceso FROM D D2 WHERE D2.IdPedido=D.IdPedido FOR XML PATH(''),TYPE).value('.','nvarchar(max)'),1,1,'') AS Procesos,
+  STUFF((SELECT DISTINCT ',' + D3.Operario  FROM D D3 WHERE D3.IdPedido=D.IdPedido FOR XML PATH(''),TYPE).value('.','nvarchar(max)'),1,1,'') AS Operarios,
+  STUFF((SELECT DISTINCT ',' + D4.Maquina   FROM D D4 WHERE D4.IdPedido=D.IdPedido FOR XML PATH(''),TYPE).value('.','nvarchar(max)'),1,1,'') AS Maquinas
+FROM D
+JOIN dbo.ORDINI  O ON O.ID_ORDINI  = D.IdPedido
+JOIN dbo.PERSONE P ON P.ID_PERSONE = O.ID_PERSONE
+GROUP BY D.Pedido, D.IdPedido, P.DESCR1, O.DESCR1_SPED
+ORDER BY Inicio DESC;
+    `;
+
+    const result = await rq.query(query);
+    return res.json(result.recordset);
+  } catch (err) {
+    console.error('❌ ERROR EN /control-optima/terminales:', err);
+    return res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 
 
 
