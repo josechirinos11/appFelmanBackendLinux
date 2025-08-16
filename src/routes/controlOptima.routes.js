@@ -1,9 +1,12 @@
 // src/routes/controlOptima.routes.js
-const express = require('express');
-const sql = require('mssql');
-const { poolPromise } = require('../config/databaseOptima'); // usa SIEMPRE este
+const express = require("express");
+const { sql, poolPromise } = require("../config/databaseOptima");
+
+
+
 
 const router = express.Router();
+
 /**
  * GET /control-optima/DASHBOARD_QALOG
  * Devuelve todas las filas y columnas de la tabla DASHBOARD_QALOG
