@@ -756,8 +756,6 @@ ORDER BY InicioProceso DESC, Pedido, CodProceso;`;
 // En src/routes/controlOptima.routes.js
 // AÑADIR debajo de otras rutas:   router.get('/qw/...', ...)
 
-const sql = require('mssql');
-const { poolPromise } = require('../db'); // igual que en el resto del archivo
 
 function baseCTE(filters = {}) {
   // Agregamos filtros opcionales a la CTE
