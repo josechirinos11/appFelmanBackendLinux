@@ -9,7 +9,7 @@ const router = express.Router();
 
 /**
  * GET /control-optima/DASHBOARD_QALOG
- * Devuelve todas las filas y columnas de la tabla DASHBOARD_QALOG
+
  */
 router.get('/DASHBOARD_QALOG', async (req, res) => {
   console.log("🔍 Petición recibida en /control-optima/DASHBOARD_QALOG");
