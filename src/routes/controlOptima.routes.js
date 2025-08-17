@@ -1189,7 +1189,7 @@ router.get('/qw/lookups', async (req, res) => {
     // Pedidos: sólo los que tienen actividad en QW (evita catálogos enormes)
     // Traemos RIF (código pedido), ID_ORDINI y Cliente.
     const sqlPedidos = `
-      WITH ORD AS (
+      ;WITH ORD AS (
         SELECT O.RIF AS Pedido, O.ID_ORDINI AS IdPedido, P.DESCR1 AS Cliente
         FROM dbo.ORDINI O WITH (NOLOCK)
         JOIN dbo.PERSONE P WITH (NOLOCK) ON P.ID_PERSONE = O.ID_PERSONE
