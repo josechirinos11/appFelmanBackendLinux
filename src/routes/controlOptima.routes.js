@@ -77,6 +77,7 @@ router.post('/sql', async (req, res) => {
 // GET /control-optima/barcoder?scope=all|ytd|mtd&from&to&page&pageSize&search
 router.get('/barcoder', async (req, res) => {
   const { scope = 'ytd', from, to, page = '1', pageSize = '50', search = '' } = req.query;
+  console.log('🔍 /barcoder IN:', { scope, from, to, page, pageSize, search });
 
   // paginación + búsqueda
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
@@ -115,6 +116,7 @@ router.get('/barcoder', async (req, res) => {
       .input('search',   sql.NVarChar, searchTxt);
 
     const query = `
+SET NOCOUNT ON;    
 DECLARE @usedFrom DATE = @from, @usedTo DATE = @to;
 DECLARE @useDateFilter bit = CASE WHEN @usedFrom IS NULL OR @usedTo IS NULL THEN 0 ELSE 1 END;
 
@@ -158,9 +160,18 @@ FROM (
 ORDER BY b.EventDT DESC
 OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;`;
 
+    //const result = await rq.query(query);
+    console.time('⏱ barcoderQuery');
     const result = await rq.query(query);
+    console.timeEnd('⏱ barcoderQuery');
     const meta  = result.recordsets?.[0]?.[0] || { total: 0, piezas: 0, area: 0, usedFrom: fromParam, usedTo: toParam };
     const items = result.recordsets?.[1] || [];
+
+
+    console.log('✅ /barcoder OUT:', {
+      page: pageNum, size: sizeNum, total: meta.total, items: items.length,
+      usedFrom: meta.usedFrom, usedTo: meta.usedTo, scope
+    });
 
     return res.json({
       items,
@@ -173,7 +184,8 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;`;
       scope
     });
   } catch (err) {
-    console.error('❌ /barcoder:', err);
+    console.error('❌ /barcoder ERROR:', { scope, from, to, page, pageSize, search, err: err?.message });
+    if (err?.stack) console.error(err.stack);
     return res.status(500).json({ status: 'error', message: err.message });
   }
 });
