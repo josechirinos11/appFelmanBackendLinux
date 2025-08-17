@@ -1167,32 +1167,34 @@ ORDER BY DateStart DESC;
 
 // ===== LOOKUPS (operarios, maquinas, pedidos) =====
 // ===== LOOKUPS (operarios, maquinas, pedidos) =====
+// ===== LOOKUPS (operarios, maquinas, pedidos) =====
 router.get('/qw/lookups', async (req, res) => {
   try {
     const { q, limit } = req.query;
     const take = Math.min(Number(limit || 2000), 10000); // tope de seguridad
-
     const pool = await poolPromise;
 
-    // --- Operarios: DISTINCT TOP (N) + filtro opcional
+    // --- Operarios: DISTINCT TOP (N) desde QUEUEWORK.[USERNAME]
     const sqlOperarios = `
       SELECT DISTINCT ${take ? `TOP (${take})` : ''}
-             QW.OPERATORE AS Operario
+             QW.[USERNAME] AS Operario
       FROM dbo.QUEUEWORK QW WITH (NOLOCK)
-      WHERE QW.OPERATORE IS NOT NULL
-        ${q ? 'AND QW.OPERATORE LIKE @p_q' : ''}
+      WHERE QW.[USERNAME] IS NOT NULL
+        AND LTRIM(RTRIM(QW.[USERNAME])) <> ''
+        ${q ? 'AND QW.[USERNAME] LIKE @p_q' : ''}
       ORDER BY Operario ASC;`;
 
-    // --- Máquinas: DISTINCT TOP (N) del catálogo WORKKIND
+    // --- Máquinas: DISTINCT TOP (N) desde QUEUEHEADER.CDL_NAME
     const sqlMaquinas = `
       SELECT DISTINCT ${take ? `TOP (${take})` : ''}
-             WK.DESCRIZIONE AS Maquina
-      FROM dbo.WORKKIND WK WITH (NOLOCK)
-      WHERE WK.DESCRIZIONE IS NOT NULL
-        ${q ? 'AND WK.DESCRIZIONE LIKE @p_q' : ''}
+             QH.CDL_NAME AS Maquina
+      FROM dbo.QUEUEHEADER QH WITH (NOLOCK)
+      WHERE QH.CDL_NAME IS NOT NULL
+        AND LTRIM(RTRIM(QH.CDL_NAME)) <> ''
+        ${q ? 'AND QH.CDL_NAME LIKE @p_q' : ''}
       ORDER BY Maquina ASC;`;
 
-    // --- Pedidos: SIN CTE (evita ;WITH). Solo pedidos con actividad en QW.
+    // --- Pedidos: sólo con actividad (sin CTE, a prueba de ;WITH)
     const sqlPedidos = `
       SELECT ${take ? `TOP (${take})` : ''} 
              O.RIF        AS Pedido,
@@ -1209,14 +1211,15 @@ router.get('/qw/lookups', async (req, res) => {
       ${q ? 'AND (O.RIF LIKE @p_q OR P.DESCR1 LIKE @p_q OR CAST(O.ID_ORDINI AS varchar(20)) LIKE @p_q)' : ''}
       ORDER BY O.RIF DESC;`;
 
-    // Usa 3 requests independientes para no compartir parámetros
+    // 3 requests independientes (no comparten parámetros)
     const reqOp = pool.request();
     const reqMq = pool.request();
     const reqPe = pool.request();
     if (q) {
-      reqOp.input('p_q', sql.VarChar(100), `%${q}%`);
-      reqMq.input('p_q', sql.VarChar(100), `%${q}%`);
-      reqPe.input('p_q', sql.VarChar(100), `%${q}%`);
+      const like = `%${q}%`;
+      reqOp.input('p_q', sql.VarChar(100), like);
+      reqMq.input('p_q', sql.VarChar(100), like);
+      reqPe.input('p_q', sql.VarChar(100), like);
     }
 
     const [rOp, rMq, rPe] = await Promise.all([
@@ -1237,6 +1240,7 @@ router.get('/qw/lookups', async (req, res) => {
     return res.status(500).json({ message: err.message });
   }
 });
+
 
 
 
