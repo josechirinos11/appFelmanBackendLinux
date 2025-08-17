@@ -945,6 +945,7 @@ ORDER BY Inicio DESC, Operario, Maquina, CodProceso;
 
 
 // ===== PEDIDO · OVERVIEW (cliente, nombre, makespan, tiempos únicos, piezas, área)
+// ===== PEDIDO · OVERVIEW (cliente, nombre, makespan, tiempos únicos, piezas, área) — robusto a nombres de columnas
 router.get('/qw/order/overview', async (req, res) => {
   try {
     const { from, to, pedido, idPedido } = req.query;
@@ -952,17 +953,31 @@ router.get('/qw/order/overview', async (req, res) => {
       return res.status(400).json({ message: 'from, to y pedido (RIF) o idPedido requeridos.' });
 
     const pool = await poolPromise;
+
+    // 1) Leer columnas reales de la vista (sin CTE para evitar ;WITH)
+    const meta = await pool.request().query(`
+      SELECT c.name
+      FROM sys.columns c
+      WHERE c.object_id = OBJECT_ID('dbo.DASHBOARD_STATUS_ORDER_VIEW');
+    `);
+    const cols = new Set((meta.recordset || []).map(r => String(r.name).toUpperCase()));
+
+    // 2) Elegir candidatos válidos
+    const pick = (cands) => cands.find(n => cols.has(n.toUpperCase())) || null;
+    const pezCol  = pick(['Piezas','PEZZI','PZ','QTA_PZ','QTA_PEZZI']);
+    const areaCol = pick(['Area','MQ','M2','METRIQUADRI','METRI_QUADRI','METRIQUADRATI','SUPERFICIE','SURFACE']);
+
+    // 3) Construir expresiones seguras
+    const pezExpr  = pezCol  ? `SUM(TRY_CONVERT(float, V.[${pezCol}]))`  : `CAST(0 AS float)`;
+    const areaExpr = areaCol ? `SUM(TRY_CONVERT(float, V.[${areaCol}]))` : `CAST(0 AS float)`;
+
+    // 4) Query principal (usando tu baseCTE)
     const q = baseCTE() + `
 , F AS (
   SELECT *
   FROM D
   WHERE (@p_pedido IS NULL OR Pedido = @p_pedido)
     AND (@p_idPedido IS NULL OR IdPedido = @p_idPedido)
-),
-V AS (  -- agrega piezas/área por pedido desde la vista de estado
-  SELECT Pedido, SUM(ISNULL(Piezas,0)) AS Piezas, SUM(ISNULL(Area,0)) AS Area
-  FROM DASHBOARD_STATUS_ORDER_VIEW WITH (NOLOCK)
-  GROUP BY Pedido
 )
 SELECT TOP 1
   O.RIF           AS Pedido,
@@ -976,15 +991,15 @@ SELECT TOP 1
   SUM(F.Segundos) AS SegundosBrutos,
   SUM(CASE WHEN F.rn=1 THEN F.Segundos ELSE 0 END) AS SegundosUnicos,
   CONVERT(varchar(8), DATEADD(SECOND, SUM(CASE WHEN F.rn=1 THEN F.Segundos ELSE 0 END), 0),108) AS TiempoUnicoHHMMSS,
-  ISNULL(V.Piezas,0) AS Piezas,
-  ISNULL(V.Area,0)   AS Area
+  ${pezExpr}  AS Piezas,
+  ${areaExpr} AS Area
 FROM F
 JOIN dbo.ORDINI  O ON O.ID_ORDINI  = F.IdPedido
 JOIN dbo.PERSONE P ON P.ID_PERSONE = O.ID_PERSONE
-LEFT JOIN V         ON V.Pedido     = O.RIF
-GROUP BY O.RIF, O.ID_ORDINI, P.DESCR1, O.DESCR1_SPED, V.Piezas, V.Area
-ORDER BY Inicio DESC;
-`;
+LEFT JOIN dbo.DASHBOARD_STATUS_ORDER_VIEW V ON V.Pedido = O.RIF
+GROUP BY O.RIF, O.ID_ORDINI, P.DESCR1, O.DESCR1_SPED
+ORDER BY Inicio DESC;`;
+
     const reqst = pool.request()
       .input('p_from', sql.Date, from)
       .input('p_to',   sql.Date, to)
@@ -992,12 +1007,17 @@ ORDER BY Inicio DESC;
       .input('p_idPedido', sql.Int, idPedido ? Number(idPedido) : null);
 
     const r = await reqst.query(q);
-    return res.json({ data: r.recordset?.[0] || null, from, to, pedido, idPedido });
+    // Te mando también qué columnas usó (útil para soporte)
+    return res.json({
+      data: r.recordset?.[0] || null,
+      meta: { pezCol: pezCol || null, areaCol: areaCol || null }
+    });
   } catch (err) {
     console.error('qw/order/overview', err);
     return res.status(500).json({ message: err.message });
   }
 });
+
 
 // ===== PEDIDO · PROCESOS (línea, proceso, máquina, operarios, tiempos únicos)
 router.get('/qw/order/procesos', async (req, res) => {
