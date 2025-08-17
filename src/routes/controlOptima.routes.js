@@ -1169,6 +1169,9 @@ ORDER BY DateStart DESC;
 // ===== LOOKUPS (operarios, maquinas, pedidos) =====
 // ===== LOOKUPS (operarios, maquinas, pedidos) =====
 // ===== LOOKUPS (operarios, maquinas, pedidos) =====
+
+
+// ===== LOOKUPS (operarios, maquinas, pedidos) =====
 router.get('/qw/lookups', async (req, res) => {
   try {
     const { q, limit } = req.query;
@@ -1180,22 +1183,34 @@ router.get('/qw/lookups', async (req, res) => {
       SELECT DISTINCT ${take ? `TOP (${take})` : ''}
              QW.[USERNAME] AS Operario
       FROM dbo.QUEUEWORK QW WITH (NOLOCK)
-      WHERE QW.[USERNAME] IS NOT NULL
+      WHERE QW.[USERNAME] IS NOT NULL AND LTRIM(RTRIM(QW.[USERNAME])) <> ''
         ${q ? 'AND QW.[USERNAME] LIKE @p_q' : ''}
       ORDER BY Operario ASC;`;
 
-    // --- Máquinas (catálogo WORKKIND)
+    const sqlOperariosCount = `
+      SELECT COUNT(DISTINCT QW.[USERNAME]) AS totalOperarios
+      FROM dbo.QUEUEWORK QW WITH (NOLOCK)
+      WHERE QW.[USERNAME] IS NOT NULL AND LTRIM(RTRIM(QW.[USERNAME])) <> ''
+      ${q ? 'AND QW.[USERNAME] LIKE @p_q' : ''};`;
+
+    // --- Máquinas (desde QUEUEHEADER.CDL_NAME — coherente con tus CTEs)
     const sqlMaquinas = `
       SELECT DISTINCT ${take ? `TOP (${take})` : ''}
-             WK.DESCRIZIONE AS Maquina
-      FROM dbo.WORKKIND WK WITH (NOLOCK)
-      WHERE WK.DESCRIZIONE IS NOT NULL
-        ${q ? 'AND WK.DESCRIZIONE LIKE @p_q' : ''}
+             QH.CDL_NAME AS Maquina
+      FROM dbo.QUEUEHEADER QH WITH (NOLOCK)
+      WHERE QH.CDL_NAME IS NOT NULL AND LTRIM(RTRIM(QH.CDL_NAME)) <> ''
+        ${q ? 'AND QH.CDL_NAME LIKE @p_q' : ''}
       ORDER BY Maquina ASC;`;
 
-    // --- Pedidos (solo con actividad en QW; si quieres TODOS, quita el WHERE EXISTS)
+    const sqlMaquinasCount = `
+      SELECT COUNT(DISTINCT QH.CDL_NAME) AS totalMaquinas
+      FROM dbo.QUEUEHEADER QH WITH (NOLOCK)
+      WHERE QH.CDL_NAME IS NOT NULL AND LTRIM(RTRIM(QH.CDL_NAME)) <> ''
+      ${q ? 'AND QH.CDL_NAME LIKE @p_q' : ''};`;
+
+    // --- Pedidos (con actividad a través de ORDMAST+QUEUEWORK)
     const sqlPedidos = `
-      SELECT ${take ? `TOP (${take})` : ''} 
+      SELECT ${take ? `TOP (${take})` : ''}
              O.RIF        AS Pedido,
              O.ID_ORDINI  AS IdPedido,
              P.DESCR1     AS Cliente
@@ -1212,27 +1227,45 @@ router.get('/qw/lookups', async (req, res) => {
       ${q ? 'AND (O.RIF LIKE @p_q OR P.DESCR1 LIKE @p_q OR CAST(O.ID_ORDINI AS varchar(20)) LIKE @p_q)' : ''}
       ORDER BY O.RIF DESC;`;
 
-    // Ejecutar en paralelo
-    const reqOp = pool.request();
-    const reqMq = pool.request();
-    const reqPe = pool.request();
+    const sqlPedidosCount = `
+      SELECT COUNT(*) AS totalPedidos
+      FROM dbo.ORDINI  O WITH (NOLOCK)
+      JOIN dbo.PERSONE P WITH (NOLOCK) ON P.ID_PERSONE = O.ID_PERSONE
+      WHERE EXISTS (
+        SELECT 1
+        FROM dbo.ORDMAST   OM WITH (NOLOCK)
+        JOIN dbo.QUEUEWORK QW WITH (NOLOCK) ON QW.ID_ORDMAST = OM.ID_ORDMAST
+        WHERE OM.ID_ORDINI = O.ID_ORDINI
+          AND QW.ID_QUEUEREASON IN (1,2)
+          AND QW.ID_QUEUEREASON_COMPLETE = 20
+      )
+      ${q ? 'AND (O.RIF LIKE @p_q OR P.DESCR1 LIKE @p_q OR CAST(O.ID_ORDINI AS varchar(20)) LIKE @p_q)' : ''};`;
+
+    // requests independientes
+    const reqOp = pool.request(), reqOpC = pool.request();
+    const reqMq = pool.request(), reqMqC = pool.request();
+    const reqPe = pool.request(), reqPeC = pool.request();
     if (q) {
       const like = `%${q}%`;
-      reqOp.input('p_q', sql.VarChar(100), like);
-      reqMq.input('p_q', sql.VarChar(100), like);
-      reqPe.input('p_q', sql.VarChar(100), like);
+      for (const r of [reqOp, reqOpC, reqMq, reqMqC, reqPe, reqPeC]) r.input('p_q', sql.VarChar(100), like);
     }
 
-    const [rOp, rMq, rPe] = await Promise.all([
+    const [rOp, rOpC, rMq, rMqC, rPe, rPeC] = await Promise.all([
       reqOp.query(sqlOperarios),
+      reqOpC.query(sqlOperariosCount),
       reqMq.query(sqlMaquinas),
+      reqMqC.query(sqlMaquinasCount),
       reqPe.query(sqlPedidos),
+      reqPeC.query(sqlPedidosCount),
     ]);
 
     return res.json({
       operarios: rOp.recordset || [],
       maquinas : rMq.recordset || [],
       pedidos  : rPe.recordset || [],
+      totalOperarios: rOpC.recordset?.[0]?.totalOperarios ?? 0,
+      totalMaquinas : rMqC.recordset?.[0]?.totalMaquinas  ?? 0,
+      totalPedidos  : rPeC.recordset?.[0]?.totalPedidos   ?? 0,
       q: q || null,
       limit: take,
     });
@@ -1241,7 +1274,6 @@ router.get('/qw/lookups', async (req, res) => {
     return res.status(500).json({ message: err.message });
   }
 });
-
 
 
 
