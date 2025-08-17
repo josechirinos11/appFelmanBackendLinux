@@ -972,7 +972,312 @@ ORDER BY Inicio DESC, Operario, Maquina, CodProceso;
   }
 });
 
+// ===== Resumen por MÁQUINA → Operario =====
+router.get('/qw/machine/resumen-operarios', async (req, res) => {
+  try {
+    const { from, to, maquina } = req.query;
+    if (!from || !to || !maquina) return res.status(400).json({ message: 'from, to y maquina requeridos.' });
 
+    const pool = await poolPromise;
+    const q = baseCTE({ byMaquina: true }) + `
+SELECT
+  Maquina,
+  Operario,
+  COUNT(*) AS Registros,
+  SUM(CASE WHEN rn=1 THEN Segundos ELSE 0 END) AS Segundos,
+  MIN(DateStart) AS Inicio, MAX(DateEnd) AS Fin
+FROM D
+GROUP BY Maquina, Operario
+ORDER BY Operario;
+`;
+    const r = await pool.request()
+      .input('p_from', sql.Date, from)
+      .input('p_to',   sql.Date, to)
+      .input('p_maquina', sql.VarChar(100), String(maquina))
+      .query(q);
+
+    return res.json({ data: r.recordset, from, to, maquina });
+  } catch (err) {
+    console.error('qw/machine/resumen-operarios', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ===== Resumen por MÁQUINA → Pedido =====
+router.get('/qw/machine/resumen-pedidos', async (req, res) => {
+  try {
+    const { from, to, maquina } = req.query;
+    if (!from || !to || !maquina) return res.status(400).json({ message: 'from, to y maquina requeridos.' });
+
+    const pool = await poolPromise;
+    const q = baseCTE({ byMaquina: true }) + `
+SELECT
+  Maquina, Pedido, IdPedido,
+  COUNT(*) AS Registros,
+  SUM(CASE WHEN rn=1 THEN Segundos ELSE 0 END) AS Segundos,
+  MIN(DateStart) AS Inicio, MAX(DateEnd) AS Fin
+FROM D
+GROUP BY Maquina, Pedido, IdPedido
+ORDER BY Inicio DESC, Pedido;
+`;
+    const r = await pool.request()
+      .input('p_from', sql.Date, from)
+      .input('p_to',   sql.Date, to)
+      .input('p_maquina', sql.VarChar(100), String(maquina))
+      .query(q);
+
+    return res.json({ data: r.recordset, from, to, maquina });
+  } catch (err) {
+    console.error('qw/machine/resumen-pedidos', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ===== MÁQUINA → detalle crudo (tiras QW) =====
+router.get('/qw/machine/raw', async (req, res) => {
+  try {
+    const { from, to, maquina, operario } = req.query;
+    if (!from || !to || !maquina) return res.status(400).json({ message: 'from, to y maquina requeridos.' });
+
+    const byO = !!operario;
+    const pool = await poolPromise;
+    const q = baseCTE({ byMaquina: true, byOperario: byO }) + `
+SELECT
+  Pedido, IdPedido, Linea, Maquina, CodProceso, DescProceso, Operario,
+  DateStart, DateEnd, Segundos
+FROM D
+ORDER BY DateStart DESC;
+`;
+    const reqst = pool.request()
+      .input('p_from', sql.Date, from)
+      .input('p_to',   sql.Date, to)
+      .input('p_maquina', sql.VarChar(100), String(maquina));
+    if (byO) reqst.input('p_operario', sql.VarChar(100), String(operario));
+
+    const r = await reqst.query(q);
+    return res.json({ data: r.recordset, from, to, maquina, operario });
+  } catch (err) {
+    console.error('qw/machine/raw', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+
+
+// ===== PEDIDO · OVERVIEW (cliente, nombre, makespan, tiempos únicos) =====
+router.get('/qw/order/overview', async (req, res) => {
+  try {
+    const { from, to, pedido, idPedido } = req.query;
+    if (!from || !to || (!pedido && !idPedido))
+      return res.status(400).json({ message: 'from, to y pedido (RIF) o idPedido requeridos.' });
+
+    const pool = await poolPromise;
+    const q = baseCTE() + `
+-- Filtrado por pedido/id
+, F AS (
+  SELECT *
+  FROM D
+  WHERE (@p_pedido IS NULL OR Pedido = @p_pedido)
+    AND (@p_idPedido IS NULL OR IdPedido = @p_idPedido)
+)
+SELECT
+  TOP 1
+  O.RIF           AS Pedido,
+  O.ID_ORDINI     AS IdPedido,
+  P.DESCR1        AS Cliente,
+  O.DESCR1_SPED   AS NombrePedido,
+  MIN(F.DateStart) AS Inicio,
+  MAX(F.DateEnd)   AS Fin,
+  DATEDIFF(SECOND, MIN(F.DateStart), MAX(F.DateEnd)) AS SegundosMakespan,
+  CONVERT(varchar(8), DATEADD(SECOND, DATEDIFF(SECOND, MIN(F.DateStart), MAX(F.DateEnd)), 0), 108) AS MakespanHHMMSS,
+  SUM(F.Segundos) AS SegundosBrutos,
+  SUM(CASE WHEN F.rn=1 THEN F.Segundos ELSE 0 END) AS SegundosUnicos,
+  CONVERT(varchar(8), DATEADD(SECOND, SUM(CASE WHEN F.rn=1 THEN F.Segundos ELSE 0 END), 0),108) AS TiempoUnicoHHMMSS
+FROM F
+JOIN dbo.ORDINI  O ON O.ID_ORDINI  = F.IdPedido
+JOIN dbo.PERSONE P ON P.ID_PERSONE = O.ID_PERSONE
+GROUP BY O.RIF, O.ID_ORDINI, P.DESCR1, O.DESCR1_SPED
+ORDER BY Inicio DESC;
+`;
+    const reqst = pool.request()
+      .input('p_from', sql.Date, from)
+      .input('p_to',   sql.Date, to)
+      .input('p_pedido', sql.VarChar(50), pedido || null)
+      .input('p_idPedido', sql.Int, idPedido ? Number(idPedido) : null);
+
+    const r = await reqst.query(q);
+    return res.json({ data: r.recordset?.[0] || null, from, to, pedido, idPedido });
+  } catch (err) {
+    console.error('qw/order/overview', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ===== PEDIDO · PROCESOS (por línea, proceso, máquina, operarios implicados) =====
+router.get('/qw/order/procesos', async (req, res) => {
+  try {
+    const { from, to, pedido, idPedido } = req.query;
+    if (!from || !to || (!pedido && !idPedido))
+      return res.status(400).json({ message: 'from, to y pedido (RIF) o idPedido requeridos.' });
+
+    const pool = await poolPromise;
+    const q = baseCTE() + `
+, F AS (
+  SELECT *
+  FROM D
+  WHERE (@p_pedido IS NULL OR Pedido = @p_pedido)
+    AND (@p_idPedido IS NULL OR IdPedido = @p_idPedido)
+)
+SELECT
+  Linea,
+  CodProceso, DescProceso,
+  Maquina,
+  -- lista de operarios únicos
+  STUFF((SELECT DISTINCT ',' + f2.Operario FROM F f2
+         WHERE f2.Linea = f.Linea AND f2.CodProceso = f.CodProceso AND f2.Maquina = f.Maquina
+         FOR XML PATH(''), TYPE).value('.','nvarchar(max)'),1,1,'') AS Operarios,
+  COUNT(*) AS Registros,
+  SUM(CASE WHEN rn=1 THEN Segundos ELSE 0 END) AS Segundos,
+  MIN(DateStart) AS Inicio, MAX(DateEnd) AS Fin
+FROM F f
+GROUP BY Linea, CodProceso, DescProceso, Maquina
+ORDER BY Linea, Inicio;
+`;
+    const reqst = pool.request()
+      .input('p_from', sql.Date, from)
+      .input('p_to',   sql.Date, to)
+      .input('p_pedido', sql.VarChar(50), pedido || null)
+      .input('p_idPedido', sql.Int, idPedido ? Number(idPedido) : null);
+
+    const r = await reqst.query(q);
+    return res.json({ data: r.recordset, from, to, pedido, idPedido });
+  } catch (err) {
+    console.error('qw/order/procesos', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ===== PEDIDO · TIMELINE CRUDO (para pintar Gantt o lista) =====
+router.get('/qw/order/raw', async (req, res) => {
+  try {
+    const { from, to, pedido, idPedido } = req.query;
+    if (!from || !to || (!pedido && !idPedido))
+      return res.status(400).json({ message: 'from, to y pedido (RIF) o idPedido requeridos.' });
+
+    const pool = await poolPromise;
+    const q = baseCTE() + `
+SELECT
+  Pedido, IdPedido, Linea,
+  Maquina, CodProceso, DescProceso, Operario,
+  DateStart, DateEnd, Segundos
+FROM D
+WHERE (@p_pedido IS NULL OR Pedido = @p_pedido)
+  AND (@p_idPedido IS NULL OR IdPedido = @p_idPedido)
+ORDER BY DateStart;
+`;
+    const reqst = pool.request()
+      .input('p_from', sql.Date, from)
+      .input('p_to',   sql.Date, to)
+      .input('p_pedido', sql.VarChar(50), pedido || null)
+      .input('p_idPedido', sql.Int, idPedido ? Number(idPedido) : null);
+
+    const r = await reqst.query(q);
+    return res.json({ data: r.recordset, from, to, pedido, idPedido });
+  } catch (err) {
+    console.error('qw/order/raw', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ===== Resumen por MÁQUINA → Operario =====
+router.get('/qw/machine/resumen-operarios', async (req, res) => {
+  try {
+    const { from, to, maquina } = req.query;
+    if (!from || !to || !maquina) return res.status(400).json({ message: 'from, to y maquina requeridos.' });
+
+    const pool = await poolPromise;
+    const q = baseCTE({ byMaquina: true }) + `
+SELECT
+  Maquina,
+  Operario,
+  COUNT(*) AS Registros,
+  SUM(CASE WHEN rn=1 THEN Segundos ELSE 0 END) AS Segundos,
+  MIN(DateStart) AS Inicio, MAX(DateEnd) AS Fin
+FROM D
+GROUP BY Maquina, Operario
+ORDER BY Operario;
+`;
+    const r = await pool.request()
+      .input('p_from', sql.Date, from)
+      .input('p_to',   sql.Date, to)
+      .input('p_maquina', sql.VarChar(100), String(maquina))
+      .query(q);
+
+    return res.json({ data: r.recordset, from, to, maquina });
+  } catch (err) {
+    console.error('qw/machine/resumen-operarios', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ===== Resumen por MÁQUINA → Pedido =====
+router.get('/qw/machine/resumen-pedidos', async (req, res) => {
+  try {
+    const { from, to, maquina } = req.query;
+    if (!from || !to || !maquina) return res.status(400).json({ message: 'from, to y maquina requeridos.' });
+
+    const pool = await poolPromise;
+    const q = baseCTE({ byMaquina: true }) + `
+SELECT
+  Maquina, Pedido, IdPedido,
+  COUNT(*) AS Registros,
+  SUM(CASE WHEN rn=1 THEN Segundos ELSE 0 END) AS Segundos,
+  MIN(DateStart) AS Inicio, MAX(DateEnd) AS Fin
+FROM D
+GROUP BY Maquina, Pedido, IdPedido
+ORDER BY Inicio DESC, Pedido;
+`;
+    const r = await pool.request()
+      .input('p_from', sql.Date, from)
+      .input('p_to',   sql.Date, to)
+      .input('p_maquina', sql.VarChar(100), String(maquina))
+      .query(q);
+
+    return res.json({ data: r.recordset, from, to, maquina });
+  } catch (err) {
+    console.error('qw/machine/resumen-pedidos', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ===== MÁQUINA → detalle crudo (QW)
+router.get('/qw/machine/raw', async (req, res) => {
+  try {
+    const { from, to, maquina, operario } = req.query;
+    if (!from || !to || !maquina) return res.status(400).json({ message: 'from, to y maquina requeridos.' });
+
+    const byO = !!operario;
+    const pool = await poolPromise;
+    const q = baseCTE({ byMaquina: true, byOperario: byO }) + `
+SELECT
+  Pedido, IdPedido, Linea, Maquina, CodProceso, DescProceso, Operario,
+  DateStart, DateEnd, Segundos
+FROM D
+ORDER BY DateStart DESC;
+`;
+    const reqst = pool.request()
+      .input('p_from', sql.Date, from)
+      .input('p_to',   sql.Date, to)
+      .input('p_maquina', sql.VarChar(100), String(maquina));
+    if (byO) reqst.input('p_operario', sql.VarChar(100), String(operario));
+
+    const r = await reqst.query(q);
+    return res.json({ data: r.recordset, from, to, maquina, operario });
+  } catch (err) {
+    console.error('qw/machine/raw', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
 
 
 
