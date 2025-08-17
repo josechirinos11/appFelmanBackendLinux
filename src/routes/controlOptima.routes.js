@@ -1165,6 +1165,68 @@ ORDER BY DateStart DESC;
   }
 });
 
+// ===== LOOKUPS (operarios, maquinas, pedidos) =====
+router.get('/qw/lookups', async (req, res) => {
+  try {
+    const { q, limit, onlyActive } = req.query;
+    const take = Math.min(Number(limit || 2000), 10000); // tope de seguridad
+
+    const pool = await poolPromise;
+
+    // Operarios y Máquinas: tomamos de QUEUEWORK (actividad real)
+    const sqlOperarios = `
+      SELECT ${take ? `TOP (${take})` : ''} DISTINCT QW.OPERATORE AS Operario
+      FROM dbo.QUEUEWORK QW WITH (NOLOCK)
+      ${q ? 'WHERE QW.OPERATORE LIKE @p_q' : ''}
+      ORDER BY Operario ASC;`;
+
+    const sqlMaquinas = `
+      SELECT ${take ? `TOP (${take})` : ''} DISTINCT WK.DESCRIZIONE AS Maquina
+      FROM dbo.WORKKIND WK WITH (NOLOCK)
+      ${q ? 'WHERE WK.DESCRIZIONE LIKE @p_q' : ''}
+      ORDER BY Maquina ASC;`;
+
+    // Pedidos: sólo los que tienen actividad en QW (evita catálogos enormes)
+    // Traemos RIF (código pedido), ID_ORDINI y Cliente.
+    const sqlPedidos = `
+      WITH ORD AS (
+        SELECT O.RIF AS Pedido, O.ID_ORDINI AS IdPedido, P.DESCR1 AS Cliente
+        FROM dbo.ORDINI O WITH (NOLOCK)
+        JOIN dbo.PERSONE P WITH (NOLOCK) ON P.ID_PERSONE = O.ID_PERSONE
+      )
+      SELECT ${take ? `TOP (${take})` : ''} Pedido, IdPedido, Cliente
+      FROM ORD
+      WHERE EXISTS (
+        SELECT 1
+        FROM dbo.QUEUEHEADER QH WITH (NOLOCK)
+        JOIN dbo.QUEUEWORK   QW WITH (NOLOCK) ON QW.ID_QUEUEHEADER = QH.ID_QUEUEHEADER
+        WHERE QH.ID_ORDINI = ORD.IdPedido
+      )
+      ${q ? 'AND (Pedido LIKE @p_q OR Cliente LIKE @p_q OR CAST(IdPedido AS varchar(20)) LIKE @p_q)' : ''}
+      ORDER BY Pedido DESC;`;
+
+    const reqst = pool.request();
+    if (q) reqst.input('p_q', sql.VarChar(100), `%${q}%`);
+
+    const [rOp, rMq, rPe] = await Promise.all([
+      reqst.query(sqlOperarios),
+      pool.request().input('p_q', q ? `%${q}%` : null).query(sqlMaquinas),
+      pool.request().input('p_q', q ? `%${q}%` : null).query(sqlPedidos)
+    ]);
+
+    // onlyActive: si en el futuro quieres filtrar por “con actividad en un rango”, lo implementamos con baseCTE(from/to)
+    return res.json({
+      operarios: rOp.recordset || [],
+      maquinas: rMq.recordset || [],
+      pedidos: rPe.recordset || [],
+      q: q || null,
+      limit: take
+    });
+  } catch (err) {
+    console.error('qw/lookups', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
 
 
 module.exports = router;
