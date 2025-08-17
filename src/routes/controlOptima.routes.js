@@ -1168,50 +1168,51 @@ ORDER BY DateStart DESC;
 // ===== LOOKUPS (operarios, maquinas, pedidos) =====
 // ===== LOOKUPS (operarios, maquinas, pedidos) =====
 // ===== LOOKUPS (operarios, maquinas, pedidos) =====
+// ===== LOOKUPS (operarios, maquinas, pedidos) =====
 router.get('/qw/lookups', async (req, res) => {
   try {
     const { q, limit } = req.query;
     const take = Math.min(Number(limit || 2000), 10000); // tope de seguridad
     const pool = await poolPromise;
 
-    // --- Operarios: DISTINCT TOP (N) desde QUEUEWORK.[USERNAME]
+    // --- Operarios (USERNAME)
     const sqlOperarios = `
       SELECT DISTINCT ${take ? `TOP (${take})` : ''}
              QW.[USERNAME] AS Operario
       FROM dbo.QUEUEWORK QW WITH (NOLOCK)
       WHERE QW.[USERNAME] IS NOT NULL
-        AND LTRIM(RTRIM(QW.[USERNAME])) <> ''
         ${q ? 'AND QW.[USERNAME] LIKE @p_q' : ''}
       ORDER BY Operario ASC;`;
 
-    // --- Máquinas: DISTINCT TOP (N) desde QUEUEHEADER.CDL_NAME
+    // --- Máquinas (catálogo WORKKIND)
     const sqlMaquinas = `
       SELECT DISTINCT ${take ? `TOP (${take})` : ''}
-             QH.CDL_NAME AS Maquina
-      FROM dbo.QUEUEHEADER QH WITH (NOLOCK)
-      WHERE QH.CDL_NAME IS NOT NULL
-        AND LTRIM(RTRIM(QH.CDL_NAME)) <> ''
-        ${q ? 'AND QH.CDL_NAME LIKE @p_q' : ''}
+             WK.DESCRIZIONE AS Maquina
+      FROM dbo.WORKKIND WK WITH (NOLOCK)
+      WHERE WK.DESCRIZIONE IS NOT NULL
+        ${q ? 'AND WK.DESCRIZIONE LIKE @p_q' : ''}
       ORDER BY Maquina ASC;`;
 
-    // --- Pedidos: sólo con actividad (sin CTE, a prueba de ;WITH)
+    // --- Pedidos (solo con actividad en QW; si quieres TODOS, quita el WHERE EXISTS)
     const sqlPedidos = `
       SELECT ${take ? `TOP (${take})` : ''} 
              O.RIF        AS Pedido,
              O.ID_ORDINI  AS IdPedido,
              P.DESCR1     AS Cliente
-      FROM dbo.ORDINI O WITH (NOLOCK)
+      FROM dbo.ORDINI  O WITH (NOLOCK)
       JOIN dbo.PERSONE P WITH (NOLOCK) ON P.ID_PERSONE = O.ID_PERSONE
       WHERE EXISTS (
         SELECT 1
-        FROM dbo.QUEUEHEADER QH WITH (NOLOCK)
-        JOIN dbo.QUEUEWORK   QW WITH (NOLOCK) ON QW.ID_QUEUEHEADER = QH.ID_QUEUEHEADER
-        WHERE QH.ID_ORDINI = O.ID_ORDINI
+        FROM dbo.ORDMAST   OM WITH (NOLOCK)
+        JOIN dbo.QUEUEWORK QW WITH (NOLOCK) ON QW.ID_ORDMAST = OM.ID_ORDMAST
+        WHERE OM.ID_ORDINI = O.ID_ORDINI
+          AND QW.ID_QUEUEREASON IN (1,2)
+          AND QW.ID_QUEUEREASON_COMPLETE = 20
       )
       ${q ? 'AND (O.RIF LIKE @p_q OR P.DESCR1 LIKE @p_q OR CAST(O.ID_ORDINI AS varchar(20)) LIKE @p_q)' : ''}
       ORDER BY O.RIF DESC;`;
 
-    // 3 requests independientes (no comparten parámetros)
+    // Ejecutar en paralelo
     const reqOp = pool.request();
     const reqMq = pool.request();
     const reqPe = pool.request();
