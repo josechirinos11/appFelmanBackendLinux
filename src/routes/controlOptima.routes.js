@@ -1326,44 +1326,56 @@ router.get('/qw/lookups', async (req, res) => {
 
 // === PIEZAS POR MÁQUINA (sin usar la vista) ==================================
 // GET /control-optima/piezas-maquina?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=500&search=...
+// GET /control-optima/piezas-maquina
 router.get('/piezas-maquina', async (req, res) => {
   const { from, to, page = '1', pageSize = '500', search = '' } = req.query;
-  console.log('🔍 GET /control-optima/piezas-maquina', { from, to, page, pageSize, search });
+  // --- Normalización fuerte de fechas (corrige 2025-07|-01 -> 2025-07-01)
+  const sanitize = (s) => {
+    if (typeof s !== 'string') return null;
+    const cleaned = s.trim().replace(/[^0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    return /^\d{4}-\d{2}-\d{2}$/.test(cleaned) ? cleaned : null;
+  };
+  const fromIso = sanitize(from);
+  const toIso   = sanitize(to);
 
-  // Defaults (SQL Server date-safe)
   const pad = (n) => (n < 10 ? '0' + n : '' + n);
   const today = new Date();
-  const defTo = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-  const defFrom = '1753-01-01';
+  const todayIso = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
 
-  const usedFrom = typeof from === 'string' && from.trim() ? from.trim() : defFrom;
-  const usedTo   = typeof to   === 'string' && to.trim()   ? to.trim()   : defTo;
+  // Defaults si no vienen o son inválidas
+  const usedFrom = fromIso || '1753-01-01';
+  const usedTo   = toIso   || todayIso;
+
   const pageNum  = Math.max(1, parseInt(page, 10) || 1);
-  const sizeNum  = Math.min(500, Math.max(1, parseInt(pageSize, 10) || 500));
+  const sizeNum  = Math.min(1000, Math.max(1, parseInt(pageSize, 10) || 500));
   const offset   = (pageNum - 1) * sizeNum;
-  const searchTxt = typeof search === 'string' && search.trim() ? search.trim() : null;
+  const searchTxt = typeof search === 'string' ? search.trim() : '';
+
+  console.log('🔍 GET /control-optima/piezas-maquina', { from: usedFrom, to: usedTo, page: String(pageNum), pageSize: String(sizeNum), search: searchTxt });
 
   try {
     const pool = await poolPromise;
     const rq = pool.request()
-      .input('from',       sql.Date,     usedFrom)
-      .input('to',         sql.Date,     usedTo)
-      .input('offset',     sql.Int,      offset)
-      .input('pageSize',   sql.Int,      sizeNum)
-      .input('search',     sql.NVarChar, searchTxt);
+      // ¡OJO! Fechas como NVARCHAR para evitar EPARAM del driver:
+      .input('fromS',     sql.NVarChar(10), usedFrom)
+      .input('toS',       sql.NVarChar(10), usedTo)
+      .input('offset',    sql.Int,          offset)
+      .input('pageSize',  sql.Int,          sizeNum)
+      .input('search',    sql.NVarChar(200), searchTxt || null);
 
-    // Nota: todo con nombres/joins tomados de las views (BARCODE_VIEW / BARCODE_DET_VIEW).
-    //       Usamos dbo.* consistentemente para Felman_2024.
     const query = `
 SET NOCOUNT ON;
 
-DECLARE @usedFrom date = @from;
-DECLARE @usedTo   date = @to;
-DECLARE @ini datetime = DATEADD(DAY, DATEDIFF(DAY, 0, @usedFrom), 0);
-DECLARE @fin datetime = DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @usedTo), 0));
+-- Parse seguro + swap si from > to
+DECLARE @fromD date = COALESCE(TRY_CONVERT(date, @fromS, 23), '1753-01-01');
+DECLARE @toD   date = COALESCE(TRY_CONVERT(date, @toS,   23), CAST(GETDATE() AS date));
+IF (@fromD > @toD) BEGIN DECLARE @tmp date = @fromD; SET @fromD = @toD; SET @toD = @tmp; END;
+
+DECLARE @ini datetime = DATEADD(DAY, DATEDIFF(DAY, 0, @fromD), 0);
+DECLARE @fin datetime = DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY, 0, @toD), 0));
 DECLARE @like nvarchar(200) = CASE WHEN @search IS NULL OR @search = '' THEN NULL ELSE '%' + @search + '%' END;
 
--- ========== TAULA1: QUEUEWORK completados (COMPLETE) ==========
+-- ========= TAULA1: QUEUEWORK completados =========
 WITH TAULA1 AS (
   SELECT TOP 100 PERCENT
     YEAR(CONVERT(DATE,Q.DATEEND))             AS ANO,
@@ -1411,7 +1423,7 @@ WITH TAULA1 AS (
     AND YEAR(Q.DATESTART) > 2018
     AND ISNULL(Q.DATEEND, '') <> ''
 ),
--- ========== TAULA2: QALOG_VIEW (TV) ==========
+-- ========= TAULA2: QALOG_VIEW (TV) =========
 TAULA2 AS (
   SELECT
     YEAR(CONVERT(DATE,Q.DATE_COMPL))          AS ANO,
@@ -1452,7 +1464,7 @@ TAULA2 AS (
   WHERE Q.VIRTMACHINE = 'TV'
     AND YEAR(Q.DATE_COMPL) > 2018
 ),
--- ========== ROTURAS: QUEUEWORK BREAK ==========
+-- ========= ROTURAS =========
 ROTURAS AS (
   SELECT
     YEAR(CONVERT(DATE,Q.DATEEND))             AS ANO,
@@ -1498,30 +1510,20 @@ ROTURAS AS (
     AND YEAR(Q.DATESTART) > 2018
     AND ISNULL(Q.DATEEND, '') <> ''
 ),
--- ========== UNION homogeneizada ==========
 U AS (
   SELECT ANO, MES, NOMBRE, PEDIDO, LINEA, DATA_COMPLETE, USERNAME, CENTRO_TRABAJO,
          TRABAJO, DESC_TRABAJO, VIDRIO, N_VIDRIO, ESTADO, DATAHORA_COMPL, PIEZAS,
-         MEDIDA_X, MEDIDA_Y, PROGR, PRODUCTO, LONG_TRABAJO, AREA, PZ_LIN,
+         O1.MEDIDA_X, O1.MEDIDA_Y, PROGR, PRODUCTO, LONG_TRABAJO, AREA, PZ_LIN,
          RAZON_QUEBRA1, RAZON_QUEBRA2, RAZON_QUEBRA3, TEXT1, PREZZO_PZ, ID_DBASEORDINI,
          COALESCE(DATAHORA_COMPL, DATEADD(SECOND, 0, CAST(DATA_COMPLETE AS datetime))) AS EventDT
-  FROM TAULA1
-  UNION ALL
-  SELECT ANO, MES, NOMBRE, PEDIDO, LINEA, DATA_COMPLETE, USERNAME, CENTRO_TRABAJO,
-         TRABAJO, DESC_TRABAJO, VIDRIO, N_VIDRIO, ESTADO, DATAHORA_COMPL, PIEZAS,
-         MEDIDA_X, MEDIDA_Y, PROGR, PRODUCTO, LONG_TRABAJO, AREA, PZ_LIN,
-         NULL, NULL, NULL, NULL, CAST(0 AS money), ID_DBASEORDINI,
-         COALESCE(DATAHORA_COMPL, DATEADD(SECOND, 0, CAST(DATA_COMPLETE AS datetime))) AS EventDT
-  FROM TAULA2
-  UNION ALL
-  SELECT ANO, MES, NOMBRE, PEDIDO, LINEA, DATA_COMPLETE, USERNAME, CENTRO_TRABAJO,
-         TRABAJO, DESC_TRABAJO, VIDRIO, N_VIDRIO, ESTADO, DATAHORA_COMPL, PIEZAS,
-         MEDIDA_X, MEDIDA_Y, PROGR, PRODUCTO, LONG_TRABAJO, AREA, PZ_LIN,
-         RAZON_QUEBRA1, RAZON_QUEBRA2, RAZON_QUEBRA3, TEXT1, PREZZO_PZ, ID_DBASEORDINI,
-         COALESCE(DATAHORA_COMPL, DATEADD(SECOND, 0, CAST(DATA_COMPLETE AS datetime))) AS EventDT
-  FROM ROTURAS
+  FROM (
+    SELECT * FROM TAULA1
+    UNION ALL
+    SELECT * FROM TAULA2
+    UNION ALL
+    SELECT * FROM ROTURAS
+  ) O1
 )
--- ========== CONTEO + PÁGINA ==========
 SELECT *
 FROM (
   SELECT
@@ -1548,32 +1550,20 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
     const rows = result.recordset || [];
     const total = rows.length ? Number(rows[0].total_count || 0) : 0;
 
-    return res.json({
-      items: rows.map(r => {
-        // Normalizamos claves al mismo formato que tu front ya consume
-        return {
-          ...r,
-          DATAHORA_COMPL: r.DATAHORA_COMPL,
-          DATA_COMPLETE : r.DATA_COMPLETE,
-          USERNAME      : r.USERNAME,
-          CENTRO_TRABAJO: r.CENTRO_TRABAJO,
-          PEDIDO        : r.PEDIDO,
-          NOMBRE        : r.NOMBRE
-        };
-      }),
+    res.json({
+      ok: true,
+      items: rows,
+      total,
       page: pageNum,
       pageSize: sizeNum,
-      total,
-      from: usedFrom,
-      to: usedTo,
-      usedFrom,
-      usedTo,
+      usedFrom: usedFrom,
+      usedTo: usedTo,
       orderBy: 'EventDT',
       orderDir: 'DESC'
     });
   } catch (err) {
     console.error('[piezas-maquina] error:', err);
-    return res.status(500).json({ status: 'error', message: err.message });
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
