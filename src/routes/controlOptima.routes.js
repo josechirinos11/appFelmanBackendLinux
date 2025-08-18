@@ -173,6 +173,10 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;`;
       usedFrom: meta.usedFrom, usedTo: meta.usedTo, scope
     });
 
+
+
+    
+
     return res.json({
       items,
       page: pageNum, pageSize: sizeNum,
@@ -1369,6 +1373,7 @@ router.get('/piezas-maquina', async (req, res) => {
     if (!pool) return res.status(500).json({ ok: false, error: 'No hay pool MSSQL disponible.' });
 
     const request = pool.request();
+    if (from && to) { dateFrom = from; dateTo = to; }
     request.input('dateFrom', sql.Date, dateFrom);
     request.input('dateTo', sql.Date, dateTo);
     request.input('search', sql.NVarChar(200), search || '');
