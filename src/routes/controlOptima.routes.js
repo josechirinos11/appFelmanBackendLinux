@@ -1633,18 +1633,19 @@ router.get('/piezas-maquina', async (req, res) => {
     const meta = result.recordsets[0]?.[0] || { usedFrom: dateFrom, usedTo: dateTo, total: 0 };
     const rows = result.recordsets[1] || [];
 
-    return res.json({
-      ok: true,
-      scope,
-      usedFrom: meta.usedFrom,
-      usedTo: meta.usedTo,
-      page: pg,
-      pageSize: psz,
-      total: meta.total,
-      orderBy: 'eventdt',
-      orderDir: 'DESC',
-      rows
-    });
+return res.json({
+  ok: true,
+  scope,
+  usedFrom: meta.usedFrom,
+  usedTo: meta.usedTo,
+  page: pg,
+  pageSize: psz,
+  total: meta.total,
+  orderBy: 'eventdt',
+  orderDir: 'DESC',
+  items: rows, // <-- renombrado
+});
+
   } catch (err) {
     console.error('[piezas-maquina] error:', err);
     return res.status(500).json({ ok: false, error: err.message });
