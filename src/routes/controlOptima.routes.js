@@ -1318,78 +1318,83 @@ router.get('/qw/lookups', async (req, res) => {
  *  - pageSize: (default 50, max 1000)
  *  - search: texto libre (pedido, cliente, usuario, producto, centro, vidrio)
  */
+
+
 router.get('/piezas-maquina', async (req, res) => {
-  const {
-    scope = 'mtd',
-    from,
-    to,
-    page = '1',
-    pageSize = '50',
-    search = ''
-  } = req.query;
-
-  const pg = Math.max(parseInt(page, 10) || 1, 1);
-  const psz = Math.min(Math.max(parseInt(pageSize, 10) || 50, 1), 1000);
-  const offset = (pg - 1) * psz;
-
-  // Rango de fechas (EventDT) según scope (en SQL se aplica sobre eventdt)
-  let dateFrom = null;
-  let dateTo = null;
-  const today = new Date(); // se usa solo como fallback para default dates
-
-  // Fechas sin zona para SQL (local del servidor)
-  const pad = (n) => String(n).padStart(2, '0');
-  const y = today.getFullYear();
-  const m = today.getMonth() + 1;
-  const d = today.getDate();
-
-  if (scope === 'today') {
-    dateFrom = `${y}-${pad(m)}-${pad(d)}`;
-    dateTo = dateFrom;
-  } else if (scope === 'wtd') {
-    // lunes a hoy (ISO: 1..7)
-    const wd = (today.getDay() + 6) % 7; // 0=lunes
-    const monday = new Date(today); monday.setDate(today.getDate() - wd);
-    dateFrom = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
-    dateTo = `${y}-${pad(m)}-${pad(d)}`;
-  } else if (scope === 'ytd') {
-    dateFrom = `${y}-01-01`;
-    dateTo = `${y}-${pad(m)}-${pad(d)}`;
-  } else if (scope === 'custom') {
-    if (!from || !to) {
-      return res.status(400).json({ ok: false, error: "Para scope='custom' debes enviar 'from' y 'to' (YYYY-MM-DD)." });
-    }
-    dateFrom = from;
-    dateTo = to;
-  } else {
-    // mtd (default)
-    dateFrom = `${y}-${pad(m)}-01`;
-    dateTo = `${y}-${pad(m)}-${pad(d)}`;
-  }
-
   try {
-    /** @type {sql.ConnectionPool} */
+    const {
+      scope = 'mtd',
+      from,
+      to,
+      page = '1',
+      pageSize = '50',
+      search = ''
+    } = req.query;
+
+    // --- Paginación
+    const pg = Math.max(parseInt(page, 10) || 1, 1);
+    const psz = Math.min(Math.max(parseInt(pageSize, 10) || 50, 1), 1000);
+    const offset = (pg - 1) * psz;
+
+    // --- Rango de fechas
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const y = now.getFullYear();
+    const m = now.getMonth() + 1;
+    const d = now.getDate();
+
+    let dateFrom = null;
+    let dateTo = null;
+
+    const toISO = (dt) => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+
+    if (scope === 'today') {
+      dateFrom = toISO(now);
+      dateTo = dateFrom;
+    } else if (scope === 'wtd') {
+      // lunes a hoy (ISO)
+      const wd = (now.getDay() + 6) % 7; // 0=lunes
+      const monday = new Date(now); monday.setDate(now.getDate() - wd);
+      dateFrom = toISO(monday);
+      dateTo = toISO(now);
+    } else if (scope === 'ytd') {
+      dateFrom = `${y}-01-01`;
+      dateTo = toISO(now);
+    } else if (scope === 'custom') {
+      if (!from || !to) {
+        return res.status(400).json({ ok: false, error: "Para scope='custom' debes enviar 'from' y 'to' (YYYY-MM-DD)." });
+      }
+      dateFrom = from;
+      dateTo = to;
+    } else {
+      // mtd
+      dateFrom = `${y}-${pad(m)}-01`;
+      dateTo = `${y}-${pad(m)}-${pad(d)}`;
+    }
+
+    // Si llegan from/to explícitos, se imponen (independiente de scope):
+    if (from && to) {
+      dateFrom = from;
+      dateTo = to;
+    }
+
+    // --- Pool MSSQL
     const pool = await poolPromise;
-    if (!pool) return res.status(500).json({ ok: false, error: 'No hay pool MSSQL disponible.' });
-
     const request = pool.request();
-    if (from && to) { dateFrom = from; dateTo = to; }
-    request.input('dateFrom', sql.Date, dateFrom);
-    request.input('dateTo', sql.Date, dateTo);
-    request.input('search', sql.NVarChar(200), search || '');
-    request.input('offset', sql.Int, offset);
-    request.input('fetch', sql.Int, psz);
 
-    if (from && to) { dateFrom = from; dateTo = to; }
+    request.input('dateFrom', sql.Date, dateFrom);
+    request.input('dateTo',   sql.Date, dateTo);
+    request.input('search',   sql.NVarChar(200), search || '');
+    request.input('offset',   sql.Int, offset);
+    request.input('fetch',    sql.Int, psz);
 
     const query = `
       SET NOCOUNT ON;
       SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
       DECLARE @useDateFilter bit = CASE WHEN @dateFrom IS NULL OR @dateTo IS NULL THEN 0 ELSE 1 END;
-      -- EventDT se filtra de [dateFrom, dateTo + 1)
 
-      /* === Base 1: operaciones completadas en máquinas (QUEUEWORK) === */
+      /* ========= BASE 1: operaciones completadas en máquinas (QUEUEWORK) ========= */
       WITH base_qw AS (
         SELECT
           O.RIF                                 AS PEDIDO,
@@ -1399,7 +1404,7 @@ router.get('/piezas-maquina', async (req, res) => {
           QW.USERNAME                           AS USERNAME,
           QH.CDL_NAME                           AS CENTRO_TRABAJO,
 
-          -- VIDRIO y N_VIDRIO (mismo criterio que vistas, excepto FOREL/DUPLO)
+          /* VIDRIO / N_VIDRIO (mismo criterio que las vistas, ajusta si tu fábrica usa 'DUPLO'/'LINEA_FOREL') */
           CASE WHEN QH.CDL_NAME IN ('DUPLO','LINEA_FOREL') THEN ''
                ELSE ISNULL( (SELECT M.CODICE
                              FROM dbo.MAGAZ M
@@ -1420,10 +1425,11 @@ router.get('/piezas-maquina', async (req, res) => {
           (OD.DIMXPZR*OD.DIMYPZR)/1000000.0     AS AREA,
           OM.QTAPZ                              AS PZ_LIN,
 
-          -- Secuenciación y claves
           QW.PROGR,
           PR.RIF                                AS PRODUCTO,
           D.PERIMETRO/1000.0                    AS PERIMETRO,
+
+          /* Timestamps crudos */
           QW.DATESTART                          AS fecha_inicio_op,
           QW.DATEEND                            AS fecha_fin_op,
           CAST(NULL AS datetime)                AS fecha_rotura,
@@ -1432,10 +1438,10 @@ router.get('/piezas-maquina', async (req, res) => {
 
           D.ID_DBASEORDINI,
 
-          -- Tiempos: trabajo
+          /* Tiempos */
           DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS t_trabajo_seg,
 
-          -- EventDT operativo (para filtros y orden): fin de la operación
+          /* EventDT unificado = fin de operación */
           QW.DATEEND                            AS eventdt
         FROM dbo.QUEUEWORK QW
         JOIN dbo.QUEUEHEADER QH    ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
@@ -1452,7 +1458,8 @@ router.get('/piezas-maquina', async (req, res) => {
           AND ISNULL(QW.DATEEND,'') <> ''
           AND YEAR(QW.DATESTART) > 2018
       ),
-      /* === Base 2: tramo TV (QALOG_VIEW) === */
+
+      /* ========= BASE 2: tramo TV (QALOG_VIEW) ========= */
       base_tv AS (
         SELECT
           Q.RIF                                 AS PEDIDO,
@@ -1494,7 +1501,8 @@ router.get('/piezas-maquina', async (req, res) => {
         WHERE Q.VIRTMACHINE = 'TV'
           AND YEAR(Q.DATE_COMPL) > 2018
       ),
-      /* === Base 3: roturas (QUEUEWORK) === */
+
+      /* ========= BASE 3: roturas (QUEUEWORK) ========= */
       base_roturas AS (
         SELECT
           O.RIF                                 AS PEDIDO,
@@ -1516,7 +1524,7 @@ router.get('/piezas-maquina', async (req, res) => {
 
           CASE WHEN QW.ID_QUEUEREASON_BREAK = 200 THEN 'ROTURA' ELSE '' END AS ESTADO,
 
-          QW.DATEEND                            AS DATAHORA_COMPL, -- momento en que se cerró la operación (no la rotura)
+          QW.DATEEND                            AS DATAHORA_COMPL,
           CAST(1 AS int)                        AS PIEZAS,
 
           OD.DIMXPZR                            AS MEDIDA_X,
@@ -1553,6 +1561,8 @@ router.get('/piezas-maquina', async (req, res) => {
           AND ISNULL(QW.DATEEND,'') <> ''
           AND YEAR(QW.DATESTART) > 2018
       ),
+
+      /* ========= UNION base ========= */
       B AS (
         SELECT * FROM base_qw
         UNION ALL
@@ -1560,19 +1570,19 @@ router.get('/piezas-maquina', async (req, res) => {
         UNION ALL
         SELECT * FROM base_roturas
       ),
-      -- Enriquecemos con métricas por pieza (window functions)
+
+      /* ========= Enriquecemos con métricas por pieza (window) ========= */
       BW AS (
         SELECT
           B.*,
-
-          -- t_entre_operaciones_seg: fin(prev) -> fin(actual)
+          -- fin(prev) -> fin(actual)
           DATEDIFF(
             SECOND,
             LAG(B.eventdt) OVER (PARTITION BY B.ID_DBASEORDINI ORDER BY B.eventdt, B.fecha_inicio_op),
             B.eventdt
           ) AS t_entre_operaciones_seg,
 
-          -- t_espera_prev_maquina_seg: fin(prev) -> inicio(actual)
+          -- fin(prev) -> inicio(actual)
           CASE
             WHEN B.fecha_inicio_op IS NULL THEN NULL
             ELSE DATEDIFF(
@@ -1582,41 +1592,48 @@ router.get('/piezas-maquina', async (req, res) => {
             )
           END AS t_espera_prev_maquina_seg,
 
-          -- t_desde_pedido_seg: pedido -> fin actual
+          -- pedido -> fin actual
           DATEDIFF(SECOND, B.fecha_pedido, B.eventdt) AS t_desde_pedido_seg,
 
-          -- t_hasta_entrega_prog_seg: fin actual -> entrega planificada (positivo si falta, negativo si retraso)
+          -- fin actual -> entrega planificada (positivo si falta tiempo; negativo si retraso)
           DATEDIFF(SECOND, B.eventdt, B.fecha_entrega_prog) AS t_hasta_entrega_prog_seg,
 
-          -- t_ciclo_pieza_total_seg (min inicio -> max fin) por pieza
+          -- min(inicio) -> max(fin) por pieza (repetido por fila)
           DATEDIFF(
             SECOND,
             MIN(B.fecha_inicio_op) OVER (PARTITION BY B.ID_DBASEORDINI),
             MAX(B.eventdt)        OVER (PARTITION BY B.ID_DBASEORDINI)
           ) AS t_ciclo_pieza_total_seg
         FROM B
-      ),
-      BF AS (
-        SELECT *
-        FROM BW
-        WHERE
-          (@useDateFilter = 0 OR (BW.eventdt >= @dateFrom AND BW.eventdt < DATEADD(DAY, 1, @dateTo)))
-          AND (
-            @search = '' OR
-            BW.PEDIDO LIKE '%' + @search + '%' OR
-            BW.NOMBRE LIKE '%' + @search + '%' OR
-            BW.USERNAME LIKE '%' + @search + '%' OR
-            BW.PRODUCTO LIKE '%' + @search + '%' OR
-            BW.CENTRO_TRABAJO LIKE '%' + @search + '%' OR
-            BW.VIDRIO LIKE '%' + @search + '%'
-          )
-      )
+      );
+
+      /* ========= IMPORTANTE =========
+         Un CTE solo vive para la PRIMERA sentencia que lo sigue.
+         Como necesitamos 2 SELECT (meta + página), materializamos el filtro final en #BF.
+      */
+      SELECT *
+      INTO #BF
+      FROM BW
+      WHERE
+        (@useDateFilter = 0 OR (BW.eventdt >= @dateFrom AND BW.eventdt < DATEADD(DAY, 1, @dateTo)))
+        AND (
+          @search = '' OR
+          BW.PEDIDO LIKE '%' + @search + '%' OR
+          BW.NOMBRE LIKE '%' + @search + '%' OR
+          BW.USERNAME LIKE '%' + @search + '%' OR
+          BW.PRODUCTO LIKE '%' + @search + '%' OR
+          BW.CENTRO_TRABAJO LIKE '%' + @search + '%' OR
+          BW.VIDRIO LIKE '%' + @search + '%'
+        );
+
+      -- Meta
       SELECT
         @dateFrom AS usedFrom,
         @dateTo   AS usedTo,
         COUNT(*)  AS total
-      FROM BF;
+      FROM #BF;
 
+      -- Página
       SELECT
         PEDIDO, NOMBRE, LINEA, DATA_COMPLETE, USERNAME, CENTRO_TRABAJO,
         VIDRIO, N_VIDRIO, ESTADO, DATAHORA_COMPL, PIEZAS,
@@ -1626,39 +1643,37 @@ router.get('/piezas-maquina', async (req, res) => {
         /* Métricas de tiempo */
         t_trabajo_seg, t_espera_prev_maquina_seg, t_entre_operaciones_seg,
         t_desde_pedido_seg, t_hasta_entrega_prog_seg, t_ciclo_pieza_total_seg,
-        /* Clave de pieza para el front */
+        /* Clave de pieza */
         ID_DBASEORDINI
-      FROM BF
+      FROM #BF
       ORDER BY eventdt DESC
       OFFSET @offset ROWS FETCH NEXT @fetch ROWS ONLY;
+
+      DROP TABLE #BF;
     `;
 
     const result = await request.query(query);
 
     const meta = result.recordsets[0]?.[0] || { usedFrom: dateFrom, usedTo: dateTo, total: 0 };
-    const rows = result.recordsets[1] || [];
+    const items = result.recordsets[1] || [];
 
-return res.json({
-  ok: true,
-  scope,
-  usedFrom: meta.usedFrom,
-  usedTo: meta.usedTo,
-  page: pg,
-  pageSize: psz,
-  total: meta.total,
-  orderBy: 'eventdt',
-  orderDir: 'DESC',
-  items: rows, // <-- renombrado
-});
-
+    return res.json({
+      ok: true,
+      scope: from && to ? 'custom' : scope,
+      usedFrom: meta.usedFrom,
+      usedTo: meta.usedTo,
+      page: pg,
+      pageSize: psz,
+      total: meta.total,
+      orderBy: 'eventdt',
+      orderDir: 'DESC',
+      items
+    });
   } catch (err) {
     console.error('[piezas-maquina] error:', err);
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
-
-
-
 
 
 
