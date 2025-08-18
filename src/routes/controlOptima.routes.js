@@ -1365,7 +1365,7 @@ router.get('/piezas-maquina', async (req, res) => {
 
   try {
     /** @type {sql.ConnectionPool} */
-    const pool = req.app.locals.mssqlPool || req.app.locals.pool; // ajusta a tu app
+    const pool = await poolPromise;
     if (!pool) return res.status(500).json({ ok: false, error: 'No hay pool MSSQL disponible.' });
 
     const request = pool.request();
@@ -1374,6 +1374,8 @@ router.get('/piezas-maquina', async (req, res) => {
     request.input('search', sql.NVarChar(200), search || '');
     request.input('offset', sql.Int, offset);
     request.input('fetch', sql.Int, psz);
+
+    if (from && to) { dateFrom = from; dateTo = to; }
 
     const query = `
       SET NOCOUNT ON;
