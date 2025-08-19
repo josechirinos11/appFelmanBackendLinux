@@ -1337,202 +1337,274 @@ router.get('/qw/lookups', async (req, res) => {
 // === PIEZAS POR MÁQUINA (sin usar la vista) ==================================
 // GET /control-optima/piezas-maquina?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=500&search=...
 // GET /control-optima/piezas-maquina?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=500&search=...
+// === PIEZAS POR MÁQUINA (SIN VISTAS · tablas directas OPTIMA_FELMAN) ========
+// GET /control-optima/piezas-maquina?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=500&search=...
 router.get('/piezas-maquina', async (req, res) => {
   const { from, to, page = '1', pageSize = '500', search = '' } = req.query;
 
-  const cleanYMD = (s) => (typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.trim())) ? s.trim() : null;
-  const today = new Date(); const pad = n => (n<10?'0'+n:n);
-  const todayIso = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
-  const usedFrom = cleanYMD(from) || '1753-01-01';
-  const usedTo   = cleanYMD(to)   || todayIso;
+  // Validaciones básicas
+  const validYMD = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.trim());
+  const today = new Date();
+  const pad = (n) => (n < 10 ? '0' + n : '' + n);
+  const todayIso = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
 
-  const pageNum = Math.max(1, parseInt(page,10) || 1);
-  const sizeNum = Math.min(1000, Math.max(1, parseInt(pageSize,10) || 500));
+  const usedFrom = validYMD(from) ? from : '1753-01-01';
+  const usedTo   = validYMD(to)   ? to   : todayIso;
+
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const sizeNum = Math.min(1000, Math.max(1, parseInt(pageSize, 10) || 500));
   const offset  = (pageNum - 1) * sizeNum;
   const qTxt    = (typeof search === 'string' && search.trim()) ? `%${search.trim()}%` : null;
 
   try {
     const pool = await poolPromise;
     const rq = pool.request()
-      .input('fromS',    sql.Date,      usedFrom)
-      .input('toS',      sql.Date,      usedTo)
-      .input('offset',   sql.Int,       offset)
-      .input('pageSize', sql.Int,       sizeNum)
-      .input('q',        sql.NVarChar,  qTxt);
+      .input('fromS',    sql.Date,     usedFrom)
+      .input('toS',      sql.Date,     usedTo)
+      .input('offset',   sql.Int,      offset)
+      .input('pageSize', sql.Int,      sizeNum)
+      .input('q',        sql.NVarChar, qTxt);
 
-    const sqlText = `
-    USE OPTIMA_FELMAN
+    const query = `
+USE OPTIMA_FELMAN;
 SET NOCOUNT ON;
 
 DECLARE @from date = @fromS, @to date = @toS;
 DECLARE @ini  datetime = DATEADD(DAY, DATEDIFF(DAY,0,@from), 0);
-DECLARE @fin  datetime = DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY,0,@to), 0));
+DECLARE @fin  datetime = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY,0,@to), 0)));
 
-/* ========= Solo QUEUEWORK (completadas) ========= */
-WITH QW AS (
+-- ============================================================================
+-- 1) BASE · Eventos completados en QUEUEWORK (sin vistas)
+--    * Filtramos completados: ID_QUEUEREASON IN (1,2) AND ID_QUEUEREASON_COMPLETE = 20
+--    * Calculamos tiempos por pieza/operación y esperas con ventanas
+--    * Campos de “vidrio” desde ORDDETT -> MAGAZ (como en las vistas antiguas)
+-- ============================================================================
+WITH QW_BASE AS (
   SELECT
-    OI.RIF                           AS PEDIDO,
-    OM.RIGA                          AS LINEA,
-    QH.CDL_NAME                      AS CENTRO_TRABAJO,
-    Q.USERNAME                       AS USERNAME,
-    WK.CODICE                        AS TRABAJO,
-    WK.DESCRIZIONE                   AS DESC_TRABAJO,
-    Q.DATESTART                      AS DATESTART,
-    Q.DATEEND                        AS DATEEND,
-    /* medidas (para UI) */
-    OD.DIMXPZR                       AS MEDIDA_X,
-    OD.DIMYPZR                       AS MEDIDA_Y,
-    /* para deduplicar simultáneos */
+    OI.RIF                         AS PEDIDO,
+    OM.RIGA                        AS LINEA,
+    ISNULL(OI.DESCR1_SPED,'')      AS NOMBRE,         -- cliente de cabecera
+    QH.CDL_NAME                    AS CENTRO_TRABAJO,
+    QW.[USERNAME]                  AS USERNAME,
+    WK.CODICE                      AS TRABAJO,
+    WK.DESCRIZIONE                 AS DESC_TRABAJO,
+    QW.DATESTART                   AS DATESTART,
+    QW.DATEEND                     AS DATEEND,
+    -- VIDRIO y N_VIDRIO como en las vistas antiguas (pero directo a tablas)
+    M.CODICE                       AS VIDRIO,
+    (FLOOR(TRY_CONVERT(int, OD.ID_DETT) / 2) + 1) AS N_VIDRIO,
+    -- medidas
+    OD.DIMXPZR                     AS MEDIDA_X,
+    OD.DIMYPZR                     AS MEDIDA_Y,
+    (OD.DIMXPZR * OD.DIMYPZR) / 1000000.0 AS AREA,
+    OM.QTAPZ                       AS PZ_LIN,
+    PR.RIF                         AS PRODUCTO,
+    QW.PROGR                       AS PROGR,
+    -- claves
+    QW.ID_ITEMS, QW.ID_ORDDETT, QW.ID_ORDMAST, OI.ID_ORDINI,
+    OI.DATAORD                     AS FECHA_PEDIDO,
+    OI.DATACONS                    AS FECHA_ENTREGA_PROG,
+    -- marca estado
+    CASE WHEN QW.ID_QUEUEREASON IN (1,2) THEN 'COMPLETE' ELSE '' END AS ESTADO,
+    -- rownum para deduplicar solapes exactos en mismo rango/centro
     ROW_NUMBER() OVER (
-      PARTITION BY OI.RIF, OM.RIGA, QH.CDL_NAME, Q.DATESTART, Q.DATEEND
+      PARTITION BY OI.RIF, OM.RIGA, QH.CDL_NAME, QW.DATESTART, QW.DATEEND
       ORDER BY WK.CODICE
-    )                                AS rn_same
-  FROM dbo.QUEUEWORK Q
-  JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = Q.ID_QUEUEHEADER
-  JOIN dbo.WORKKIND   WK  ON WK.ID_WORKKIND    = Q.ID_WORKKIND
-  JOIN dbo.ORDMAST    OM  ON OM.ID_ORDMAST     = Q.ID_ORDMAST
-  JOIN dbo.ORDINI     OI  ON OI.ID_ORDINI      = OM.ID_ORDINI
-  JOIN dbo.ORDDETT    OD  ON OD.ID_ORDDETT     = Q.ID_ORDDETT
-  WHERE Q.ID_QUEUEREASON IN (1,2)           -- procesables
-    AND Q.ID_QUEUEREASON_COMPLETE = 20      -- finalizadas
-    AND Q.DATESTART IS NOT NULL
-    AND Q.DATEEND   IS NOT NULL
+    ) AS rn_same
+  FROM dbo.QUEUEWORK     AS QW  WITH (NOLOCK)
+  JOIN dbo.QUEUEHEADER   AS QH  WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+  JOIN dbo.WORKKIND      AS WK  WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+  JOIN dbo.ORDMAST       AS OM  WITH (NOLOCK) ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+  JOIN dbo.ORDINI        AS OI  WITH (NOLOCK) ON OI.ID_ORDINI      = OM.ID_ORDINI
+  JOIN dbo.ORDDETT       AS OD  WITH (NOLOCK) ON OD.ID_ORDDETT     = QW.ID_ORDDETT
+  LEFT JOIN dbo.MAGAZ    AS M   WITH (NOLOCK) ON M.ID_MAGAZ        = OD.ID_MAGAZ
+  LEFT JOIN dbo.PRODOTTI AS PR  WITH (NOLOCK) ON PR.ID_PRODOTTI    = OM.ID_PRODOTTI
+  WHERE QW.ID_QUEUEREASON IN (1,2)
+    AND QW.ID_QUEUEREASON_COMPLETE = 20
+    AND QW.DATESTART IS NOT NULL
+    AND QW.DATEEND   IS NOT NULL
+    AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
 ),
-
-/* ========= Filtro fechas + búsqueda ========= */
-UF AS (
-  SELECT *
-  FROM QW
-  WHERE DATEEND >= @ini AND DATEEND < @fin
-    AND (
-      @q IS NULL OR
-      PEDIDO LIKE @q OR USERNAME LIKE @q OR CENTRO_TRABAJO LIKE @q OR TRABAJO LIKE @q
-    )
-),
-
-/* ========= Cálculo de tiempos ========= */
-ENRICH AS (
+QW_TIMES AS (
   SELECT
-    U.*,
+    *,
+    -- evento principal para ordenación/filtrado temporal
+    COALESCE(DATEEND, DATESTART) AS eventdt,
 
-    /* duración efectiva (solo 1 de los simultáneos) */
-    CASE WHEN U.rn_same = 1
-         THEN DATEDIFF(SECOND, U.DATESTART, U.DATEEND)
-         ELSE 0
-    END AS t_trabajo_seg,
+    -- t_trabajo de la operación actual
+    DATEDIFF(SECOND, DATESTART, DATEEND) AS t_trabajo_seg,
 
-    /* espera vs. operación previa del MISMO PEDIDO (recortada a 0) */
+    -- LAG por pieza (ID_ITEMS) para espera entre operaciones de la misma pieza
+    LAG(DATEEND) OVER (PARTITION BY ID_ITEMS ORDER BY DATESTART, DATEEND) AS prev_end_same_item,
+    -- LAG por pedido/línea (sin distinguir pieza) para “espera previa” más laxa
+    LAG(DATEEND) OVER (PARTITION BY PEDIDO, LINEA ORDER BY DATESTART, DATEEND) AS prev_end_linea
+  FROM QW_BASE
+),
+QW_CALC AS (
+  SELECT
+    qb.*,
+    -- espera entre operaciones (pieza)
     CASE
-      WHEN LAG(U.DATEEND) OVER (PARTITION BY U.PEDIDO ORDER BY U.DATESTART, U.DATEEND, U.TRABAJO) IS NULL
-        THEN NULL
-      ELSE
-        CASE
-          WHEN DATEDIFF(SECOND,
-                        LAG(U.DATEEND) OVER (PARTITION BY U.PEDIDO ORDER BY U.DATESTART, U.DATEEND, U.TRABAJO),
-                        U.DATESTART) > 0
-          THEN DATEDIFF(SECOND,
-                        LAG(U.DATEEND) OVER (PARTITION BY U.PEDIDO ORDER BY U.DATESTART, U.DATEEND, U.TRABAJO),
-                        U.DATESTART)
-          ELSE 0
-        END
-    END AS t_espera_prev_maquina_seg,
-
-    /* espera entre operaciones en la MISMA MÁQUINA (recortada a 0) */
-    CASE
-      WHEN LAG(U.DATEEND) OVER (PARTITION BY U.PEDIDO, U.CENTRO_TRABAJO ORDER BY U.DATESTART, U.DATEEND, U.TRABAJO) IS NULL
-        THEN NULL
-      ELSE
-        CASE
-          WHEN DATEDIFF(SECOND,
-                        LAG(U.DATEEND) OVER (PARTITION BY U.PEDIDO, U.CENTRO_TRABAJO ORDER BY U.DATESTART, U.DATEEND, U.TRABAJO),
-                        U.DATESTART) > 0
-          THEN DATEDIFF(SECOND,
-                        LAG(U.DATEEND) OVER (PARTITION BY U.PEDIDO, U.CENTRO_TRABAJO ORDER BY U.DATESTART, U.DATEEND, U.TRABAJO),
-                        U.DATESTART)
-          ELSE 0
-        END
+      WHEN prev_end_same_item IS NULL THEN 0
+      ELSE DATEDIFF(SECOND, prev_end_same_item, DATESTART)
     END AS t_entre_operaciones_seg,
 
-    /* primer inicio del pedido para ciclo total */
-    MIN(U.DATESTART) OVER (PARTITION BY U.PEDIDO) AS first_start
-  FROM UF U
+    -- espera previa “hacia esta máquina” (a nivel pedido/línea)
+    CASE
+      WHEN prev_end_linea IS NULL THEN 0
+      ELSE DATEDIFF(SECOND, prev_end_linea, DATESTART)
+    END AS t_espera_prev_maquina_seg
+  FROM QW_TIMES qb
 ),
-
-/* ========= Fechas de pedido/entrega (vista existente) ========= */
-ENRICH2 AS (
+QW_ADD AS (
+  -- tiempos relativos al pedido/entrega programada + ciclo pieza (por ID_ITEMS)
   SELECT
-    E.*,
-    S.FechaPedido  AS fecha_pedido,
-    S.FechaEntrega AS fecha_entrega_prog,
-
-    /* desde pedido (no negativo) */
-    CASE
-      WHEN S.FechaPedido IS NULL THEN NULL
-      ELSE CASE WHEN DATEDIFF(SECOND, S.FechaPedido, E.DATESTART) < 0 THEN 0
-                ELSE DATEDIFF(SECOND, S.FechaPedido, E.DATESTART)
-           END
-    END AS t_desde_pedido_seg,
-
-    /* hasta entrega programada (puede ser negativo si ya pasó) */
-    CASE
-      WHEN S.FechaEntrega IS NULL THEN NULL
-      ELSE DATEDIFF(SECOND, E.DATEEND, S.FechaEntrega)
-    END AS t_hasta_entrega_prog_seg,
-
-    /* ciclo total (desde primer start del pedido hasta fin del evento) */
-    DATEDIFF(SECOND, E.first_start, E.DATEEND) AS t_ciclo_pieza_total_seg
-  FROM ENRICH E
-  LEFT JOIN dbo.DASHBOARD_STATUS_ORDER_VIEW S
-    ON S.Pedido = E.PEDIDO
+    qa.*,
+    CASE WHEN FECHA_PEDIDO IS NULL OR DATEEND IS NULL
+      THEN 0 ELSE DATEDIFF(SECOND, FECHA_PEDIDO, DATEEND) END AS t_desde_pedido_seg,
+    CASE WHEN FECHA_ENTREGA_PROG IS NULL OR DATEEND IS NULL
+      THEN 0 ELSE DATEDIFF(SECOND, DATEEND, FECHA_ENTREGA_PROG) END AS t_hasta_entrega_prog_seg,
+    -- ciclo total por pieza (min start a max end en esa pieza)
+    MIN(DATESTART) OVER (PARTITION BY ID_ITEMS) AS min_start_item,
+    MAX(DATEEND)   OVER (PARTITION BY ID_ITEMS) AS max_end_item
+  FROM QW_CALC qa
+),
+QW_OUT AS (
+  SELECT
+    PEDIDO, LINEA, NOMBRE, CENTRO_TRABAJO, USERNAME,
+    TRABAJO, DESC_TRABAJO,
+    VIDRIO, N_VIDRIO,
+    ESTADO,
+    eventdt, DATESTART AS fecha_inicio_op, DATEEND AS fecha_fin_op,
+    CAST(NULL AS datetime) AS fecha_rotura,
+    FECHA_PEDIDO AS fecha_pedido,
+    FECHA_ENTREGA_PROG AS fecha_entrega_prog,
+    MEDIDA_X, MEDIDA_Y, AREA, PZ_LIN, PRODUCTO, PROGR,
+    -- tiempos
+    t_trabajo_seg,
+    t_espera_prev_maquina_seg,
+    t_entre_operaciones_seg,
+    (CASE WHEN min_start_item IS NULL OR max_end_item IS NULL THEN 0
+          ELSE DATEDIFF(SECOND, min_start_item, max_end_item) END) AS t_ciclo_pieza_total_seg,
+    -- razones de rotura (no aplica aquí)
+    CAST('' AS nvarchar(200)) AS RAZON_QUEBRA1,
+    CAST('' AS nvarchar(200)) AS RAZON_QUEBRA2,
+    CAST('' AS nvarchar(200)) AS RAZON_QUEBRA3,
+    CAST('' AS nvarchar(200)) AS TEXT1
+  FROM QW_ADD
+  WHERE rn_same = 1
+),
+-- ============================================================================
+-- 2) ROTURAS (QUEUEWORK con ID_QUEUEREASON_BREAK = 200) — también sin vistas
+-- ============================================================================
+ROTURAS AS (
+  SELECT
+    OI.RIF                       AS PEDIDO,
+    OM.RIGA                      AS LINEA,
+    ISNULL(OI.DESCR1_SPED,'')    AS NOMBRE,
+    QH.CDL_NAME                  AS CENTRO_TRABAJO,
+    QW.[USERNAME]                AS USERNAME,
+    WK.CODICE                    AS TRABAJO,
+    WK.DESCRIZIONE               AS DESC_TRABAJO,
+    M.CODICE                     AS VIDRIO,
+    (FLOOR(TRY_CONVERT(int, OD.ID_DETT) / 2) + 1) AS N_VIDRIO,
+    'ROTURA'                     AS ESTADO,
+    -- fechas
+    COALESCE(QW.DATEEND, QW.DATESTART) AS eventdt,
+    QW.DATESTART                AS fecha_inicio_op,
+    QW.DATEEND                  AS fecha_fin_op,
+    QW.DATEBROKEN               AS fecha_rotura,
+    OI.DATAORD                  AS fecha_pedido,
+    OI.DATACONS                 AS fecha_entrega_prog,
+    -- medidas
+    OD.DIMXPZR                  AS MEDIDA_X,
+    OD.DIMYPZR                  AS MEDIDA_Y,
+    (OD.DIMXPZR * OD.DIMYPZR) / 1000000.0 AS AREA,
+    OM.QTAPZ                    AS PZ_LIN,
+    PR.RIF                      AS PRODUCTO,
+    QW.PROGR                    AS PROGR,
+    -- tiempos base
+    DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS t_trabajo_seg,
+    CAST(0 AS int)             AS t_espera_prev_maquina_seg,
+    CAST(0 AS int)             AS t_entre_operaciones_seg,
+    CASE WHEN OI.DATAORD IS NULL OR QW.DATEEND IS NULL
+         THEN 0 ELSE DATEDIFF(SECOND, OI.DATAORD, QW.DATEEND) END AS t_desde_pedido_seg,
+    CASE WHEN OI.DATACONS IS NULL OR QW.DATEEND IS NULL
+         THEN 0 ELSE DATEDIFF(SECOND, QW.DATEEND, OI.DATACONS) END AS t_hasta_entrega_prog_seg,
+    -- ciclo (aprox por pieza puntual)
+    DATEDIFF(SECOND, QW.DATESTART, QW.DATEEND) AS t_ciclo_pieza_total_seg,
+    -- razones/textos
+    (SELECT REASON_DESCR FROM dbo.QUEUEREASON T1 WITH (NOLOCK) WHERE T1.ID_QUEUEREASON = QW.ID_QUEUEREASON_CAUPROD ) AS RAZON_QUEBRA1,
+    (SELECT REASON_DESCR FROM dbo.QUEUEREASON T1 WITH (NOLOCK) WHERE T1.ID_QUEUEREASON = QW.ID_QUEUEREASON_CAUPROD1) AS RAZON_QUEBRA2,
+    (SELECT REASON_DESCR FROM dbo.QUEUEREASON T1 WITH (NOLOCK) WHERE T1.ID_QUEUEREASON = QW.ID_QUEUEREASON_CAUPROD2) AS RAZON_QUEBRA3,
+    QW.TEXT1
+  FROM dbo.QUEUEWORK   AS QW  WITH (NOLOCK)
+  JOIN dbo.QUEUEHEADER AS QH  WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+  JOIN dbo.WORKKIND    AS WK  WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+  JOIN dbo.ORDMAST     AS OM  WITH (NOLOCK) ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+  JOIN dbo.ORDINI      AS OI  WITH (NOLOCK) ON OI.ID_ORDINI      = OM.ID_ORDINI
+  JOIN dbo.ORDDETT     AS OD  WITH (NOLOCK) ON OD.ID_ORDDETT     = QW.ID_ORDDETT
+  LEFT JOIN dbo.MAGAZ  AS M   WITH (NOLOCK) ON M.ID_MAGAZ        = OD.ID_MAGAZ
+  LEFT JOIN dbo.PRODOTTI AS PR WITH (NOLOCK) ON PR.ID_PRODOTTI   = OM.ID_PRODOTTI
+  WHERE QW.ID_QUEUEREASON_BREAK = 200
+    AND QW.DATESTART IS NOT NULL
+    AND QW.DATEEND   IS NOT NULL
+    AND QW.DATESTART >= @ini AND QW.DATEEND <= @fin
+),
+ALL_ROWS AS (
+  SELECT * FROM QW_OUT
+  UNION ALL
+  SELECT * FROM ROTURAS
+),
+FILTERED AS (
+  SELECT *
+  FROM ALL_ROWS
+  WHERE (@q IS NULL OR @q = '')
+    OR PEDIDO         LIKE @q
+    OR USERNAME       LIKE @q
+    OR NOMBRE         LIKE @q
+    OR PRODUCTO       LIKE @q
+    OR CENTRO_TRABAJO LIKE @q
+    OR VIDRIO         LIKE @q
 )
 
+-- 3) META
+SELECT
+  @from AS usedFrom, @to AS usedTo,
+  COUNT(*) AS total,
+  ISNULL(SUM(CAST(1 AS float)), 0)        AS piezas, -- cada fila = 1 pieza-evento
+  ISNULL(SUM(CAST(AREA AS float)), 0)     AS area
+FROM FILTERED;
+
+-- 4) PÁGINA
 SELECT *
-FROM (
-  SELECT
-    X.PEDIDO, X.LINEA, X.CENTRO_TRABAJO, X.USERNAME, X.TRABAJO,
-    X.MEDIDA_X, X.MEDIDA_Y,
-    /* alias esperados por el frontend */
-    X.DATESTART AS fecha_inicio_op,
-    X.DATEEND   AS fecha_fin_op,
-    X.fecha_pedido, X.fecha_entrega_prog,
-
-    X.t_trabajo_seg,
-    X.t_espera_prev_maquina_seg,
-    X.t_entre_operaciones_seg,
-    X.t_desde_pedido_seg,
-    X.t_hasta_entrega_prog_seg,
-    X.t_ciclo_pieza_total_seg,
-
-    /* para ordenar/paginar */
-    X.DATEEND   AS eventdt,
-    COUNT(*) OVER() AS total_count
-  FROM ENRICH2 X
-) Z
-ORDER BY Z.eventdt DESC, Z.PEDIDO ASC, Z.LINEA ASC
+FROM FILTERED
+ORDER BY eventdt DESC
 OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
-    `;
+`;
 
-    const result = await rq.query(sqlText);
-    const items = result.recordset || [];
-    const total = items.length ? Number(items[0].total_count || 0) : 0;
+    const r = await rq.query(query);
+    const meta  = r.recordsets?.[0]?.[0] || { total: 0, piezas: 0, area: 0, usedFrom: usedFrom, usedTo: usedTo };
+    const items = r.recordsets?.[1] || [];
 
     return res.json({
-      ok: true,
       items,
-      total,
       page: pageNum,
       pageSize: sizeNum,
-      usedFrom,
-      usedTo,
+      total: meta.total,
+      from: usedFrom,
+      to: usedTo,
+      usedFrom: meta.usedFrom,
+      usedTo: meta.usedTo,
       orderBy: 'eventdt',
-      orderDir: 'DESC'
+      orderDir: 'DESC',
+      agg: { piezas: meta.piezas, area: meta.area }
     });
   } catch (err) {
-    console.error('[piezas-maquina] error:', err);
-    return res.status(500).json({ ok: false, message: err.message });
+    console.error('❌ /piezas-maquina ERROR:', err);
+    return res.status(500).json({ status: 'error', message: err.message });
   }
 });
-
 
 
 
