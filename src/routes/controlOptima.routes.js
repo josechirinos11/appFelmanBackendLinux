@@ -1346,6 +1346,7 @@ router.get('/qw/lookups', async (req, res) => {
 // GET /piezas-maquina?scope=ytd|mtd&from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=100&search=texto
 // GET /control-optima/piezas-maquina
 // GET /control-optima/piezas-maquina
+// GET /control-optima/piezas-maquina
 router.get('/piezas-maquina', async (req, res) => {
   const pool = await poolPromise;
 
@@ -1371,7 +1372,7 @@ router.get('/piezas-maquina', async (req, res) => {
   try {
     const request = pool.request();
 
-    // --- Parámetros SQL (NO volver a DECLARE) ---
+    // --- Parámetros SQL (NO volver a volver a DECLARE) ---
     request.input('from', sql.DateTime, from || null);
     request.input('to', sql.DateTime, to || null);
     request.input('search', sql.NVarChar(100), search || null);
@@ -1450,7 +1451,7 @@ ENRICH AS (
     COALESCE(b.DATAHORA_COMPL, CAST(b.DATA_COMPLETE AS datetime)) AS eventdt
   FROM BASE b
 ),
-ORDEN AS (
+ORDENED AS (
   SELECT
     e.*,
     LAG(e.eventdt) OVER (PARTITION BY e.PEDIDO, e.LINEA, e.ID_ITEMS ORDER BY e.eventdt) AS prev_eventdt
@@ -1464,7 +1465,7 @@ SELECT
   COUNT(*)                                        AS total,
   ISNULL(SUM(CAST(PIEZAS AS float)), 0)           AS piezas,
   ISNULL(SUM(CAST(AREA   AS float)), 0)           AS area
-FROM ORDEN;
+FROM ORDENED;
 
 -- ================ ITEMS (paginado) ================
 SELECT
@@ -1491,7 +1492,7 @@ SELECT
     MIN(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS),
     MAX(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS)
   )                                                                                   AS t_ciclo_pieza_total_seg
-FROM ORDEN o
+FROM ORDENED o
 ORDER BY o.eventdt DESC
 OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
     `;
