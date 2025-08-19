@@ -1342,141 +1342,258 @@ router.get('/qw/lookups', async (req, res) => {
 
 // === PIEZAS POR MÁQUINA (sin vistas) =========================================
 // GET /control-optima/piezas-maquina?scope=custom|ytd|mtd|all&from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=100&search=TXT
+// ========================= RUTA: /piezas-maquina =========================
+// GET /piezas-maquina?scope=ytd|mtd&from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=100&search=texto
 router.get('/piezas-maquina', async (req, res) => {
   const { scope = 'ytd', from, to, page = '1', pageSize = '100', search = '' } = req.query;
   try {
     const pool = await poolPromise;
 
-    // --- paginación / búsqueda / fechas por defecto
+    // --- Sanitización/paginación ---
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const sizeNum = Math.min(500, Math.max(1, parseInt(pageSize, 10) || 100));
     const offset  = (pageNum - 1) * sizeNum;
     const searchTxt = (typeof search === 'string' && search.trim()) ? search.trim() : null;
 
+    // Fechas por defecto desde JS (backup); la lógica final se decide en SQL también
     const today = new Date();
     const pad = (n)=> n<10?`0${n}`:`${n}`;
     const fmt = (d)=> `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 
     let defFrom=null, defTo=null;
-    if (scope === 'mtd') { defFrom = fmt(new Date(today.getFullYear(), today.getMonth(), 1)); defTo=fmt(today); }
-    else if (scope === 'ytd') { defFrom = fmt(new Date(today.getFullYear(), 0, 1)); defTo=fmt(today); }
-    else if (scope === 'custom') { /* usamos from/to tal cual */ }
-    else { /* all => sin filtro de fechas */ }
+    if (!from || !to) {
+      // por defecto últimos 60 días respecto a hoy
+      const toD = new Date(today.getTime());
+      const fromD = new Date(today.getTime() - 59*24*3600*1000);
+      defFrom = fmt(fromD);
+      defTo   = fmt(toD);
+    }
 
-    const fromParam = (typeof from === 'string' && from.trim()) ? from : defFrom;
-    const toParam   = (typeof to   === 'string' && to.trim())   ? to   : defTo;
+    // --- Ejecutar SQL (2 recordsets: META + ITEMS) ---
+    const request = pool.request();
+    request.input('from', sql.Date, from || defFrom);
+    request.input('to',   sql.Date, to   || defTo);
+    request.input('search', sql.NVarChar(200), searchTxt);
+    request.input('offset', sql.Int, offset);
+    request.input('fetch',  sql.Int, sizeNum);
+    request.input('scope',  sql.NVarChar(20), scope);
 
-    const rq = pool.request()
-      .input('from',     sql.Date,     fromParam || null)
-      .input('to',       sql.Date,     toParam   || null)
-      .input('offset',   sql.Int,      offset)
-      .input('pageSize', sql.Int,      sizeNum)
-      .input('search',   sql.NVarChar, searchTxt);
+    const result = await request.query(`
+      SET NOCOUNT ON;
+      USE OPTIMA_FELMAN;
 
-    const query = `
-SET NOCOUNT ON;
-USE OPTIMA_FELMAN;
+      DECLARE @from DATE = @from;
+      DECLARE @to   DATE = @to;
+      DECLARE @search NVARCHAR(200) = @search;
+      DECLARE @scope  NVARCHAR(20)  = @scope;
 
-DECLARE @usedFrom DATE = @from;
-DECLARE @usedTo   DATE = @to;
-DECLARE @useDateFilter bit = CASE WHEN @usedFrom IS NULL OR @usedTo IS NULL THEN 0 ELSE 1 END;
+      -- Si por cualquier motivo no vienen fechas, acotamos por defecto 60 días atrás desde el máximo DATEEND disponible
+      DECLARE @maxEnd DATE = (SELECT CAST(MAX(QW.DATEEND) AS DATE) FROM dbo.QUEUEWORK QW WITH (NOLOCK));
+      IF @maxEnd IS NULL SET @maxEnd = CAST(GETDATE() AS DATE);
 
-IF OBJECT_ID('tempdb..#BASE') IS NOT NULL DROP TABLE #BASE;
+      DECLARE @usedFrom DATE = ISNULL(@from, DATEADD(DAY, -59, @maxEnd));
+      DECLARE @usedTo   DATE = ISNULL(@to,   @maxEnd);
 
--- ================== LLENAR #BASE (sin vistas) ==================
-SELECT
-  O.RIF                                  AS PEDIDO,
-  ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
-  OM.RIGA                                AS LINEA,
-  CONVERT(date, QW.DATEEND)              AS DATA_COMPLETE,
-  QW.[USERNAME]                          AS USERNAME,
-  WK.CODICE                              AS TRABAJO,
-  WK.DESCRIZIONE                         AS DESC_TRABAJO,
-  QH.CDL_NAME                            AS CENTRO_TRABAJO,
-  CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' ELSE ISNULL(M.CODICE,'') END  AS VIDRIO,
-  CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0 ELSE FLOOR(OD.ID_DETT/2)+1 END AS N_VIDRIO,
-  CASE WHEN QW.ID_QUEUEREASON IN (1,2) THEN 'COMPLETE' ELSE '' END            AS ESTADO,
-  QW.DATEEND                             AS DATAHORA_COMPL,
-  CAST(1 AS INT)                         AS PIEZAS,
-  OD.DIMXPZR                             AS MEDIDA_X,
-  OD.DIMYPZR                             AS MEDIDA_Y,
-  CAST(OD.DIMXPZR*OD.DIMYPZR/1000000.0 AS decimal(18,6)) AS AREA,
-  OM.QTAPZ                               AS PZ_LIN,
-  QW.PROGR                               AS PROGR,
-  PR.RIF                                 AS PRODUCTO,
-  CAST(DB.PERIMETRO/1000.0 AS decimal(18,6)) AS PERIMETRO,
-  CASE WHEN WK.ID_TIPILAVORAZIONE = 301 AND WK.PRIOWORK IN (20,30)
-       THEN CAST(DB.LENTOTBARRE/1000.0 AS decimal(18,6)) ELSE 0 END AS LONG_TRABAJO
-INTO #BASE
-FROM dbo.QUEUEWORK    QW
-JOIN dbo.QUEUEHEADER  QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-JOIN dbo.WORKKIND     WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-JOIN dbo.ORDMAST      OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-JOIN dbo.ORDINI       O  ON O.ID_ORDINI       = OM.ID_ORDINI
-JOIN dbo.ORDDETT      OD ON OD.ID_ORDDETT     = QW.ID_ORDDETT
-LEFT JOIN dbo.MAGAZ   M  ON M.ID_MAGAZ        = OD.ID_MAGAZ
-LEFT JOIN dbo.ITEMS   IT ON IT.ID_ITEMS       = QW.ID_ITEMS
-LEFT JOIN dbo.DBASEORDINI DB ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
-LEFT JOIN dbo.PRODOTTI PR  ON PR.ID_PRODOTTI      = OM.ID_PRODOTTI
-WHERE QW.ID_QUEUEREASON IN (1,2)
-  AND QW.ID_QUEUEREASON_COMPLETE = 20
-  AND QW.DATESTART IS NOT NULL
-  AND QW.DATEEND   IS NOT NULL
-  AND (
-        @useDateFilter = 0
-        OR QW.DATEEND >= DATEADD(DAY, DATEDIFF(DAY,0,@usedFrom), 0)
-       AND QW.DATEEND <  DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY,0,@usedTo), 0))
+      -- Ajuste por scope si viene 'mtd' o 'ytd'
+      IF LOWER(ISNULL(@scope,'')) = 'mtd'
+      BEGIN
+        SET @usedFrom = DATEFROMPARTS(YEAR(@maxEnd), MONTH(@maxEnd), 1);
+        SET @usedTo   = @maxEnd;
+      END
+      ELSE IF LOWER(ISNULL(@scope,'')) = 'ytd'
+      BEGIN
+        SET @usedFrom = DATEFROMPARTS(YEAR(@maxEnd), 1, 1);
+        SET @usedTo   = @maxEnd;
+      END
+
+      -- Normalizamos a rango [00:00, <+1 día)
+      DECLARE @fromDT DATETIME = DATEADD(DAY, DATEDIFF(DAY, 0, @usedFrom), 0);
+      DECLARE @toDT   DATETIME = DATEADD(DAY, 1 + DATEDIFF(DAY, 0, @usedTo), 0);
+
+      /* ===============================
+         1) META (conteos y agregados)
+         =============================== */
+      ;WITH BASE AS (
+        SELECT
+          O.RIF                     AS PEDIDO,
+          ISNULL(O.DESCR1_SPED,'')  AS NOMBRE,
+          OM.RIGA                   AS LINEA,
+          QH.CDL_NAME               AS CENTRO_TRABAJO,
+          QW.[USERNAME]             AS USERNAME,
+          WK.CODICE                 AS TRABAJO,
+          WK.DESCRIZIONE            AS DESC_TRABAJO,
+          -- VIDRIO y N_VIDRIO desde ORDDETT/MAGAZ (sin vistas)
+          ISNULL(M.CODICE, '')      AS VIDRIO,
+          (FLOOR(OD.ID_DETT/2)+1)   AS N_VIDRIO,
+          PR.RIF                    AS PRODUCTO,
+          DB.DIMXPZR                AS MEDIDA_X,
+          DB.DIMYPZR                AS MEDIDA_Y,
+          DB.AREA                   AS AREA,
+          OM.QTAPZ                  AS PZ_LIN,
+          QW.PROGR                  AS PROGR,
+          QW.DATESTART              AS FECHA_INICIO_OP,
+          QW.DATEEND                AS FECHA_FIN_OP,
+          COALESCE(QW.DATEEND,QW.DATESTART) AS EventDT,
+          O.DATAORD                 AS FECHA_PEDIDO,
+          O.DATACONS                AS FECHA_ENTREGA_PROG,
+          QW.ID_ITEMS,
+          QW.ID_ORDDETT
+        FROM dbo.QUEUEWORK    QW WITH (NOLOCK)
+        JOIN dbo.QUEUEHEADER  QH WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+        JOIN dbo.WORKKIND     WK WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+        JOIN dbo.ORDMAST      OM WITH (NOLOCK) ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+        JOIN dbo.ORDINI       O  WITH (NOLOCK) ON O.ID_ORDINI       = OM.ID_ORDINI
+        JOIN dbo.ORDDETT      OD WITH (NOLOCK) ON OD.ID_ORDDETT     = QW.ID_ORDDETT
+        LEFT JOIN dbo.MAGAZ   M  WITH (NOLOCK) ON M.ID_MAGAZ        = OD.ID_MAGAZ
+        LEFT JOIN dbo.ITEMS   IT WITH (NOLOCK) ON IT.ID_ITEMS       = QW.ID_ITEMS
+        LEFT JOIN dbo.DBASEORDINI DB WITH (NOLOCK) ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
+        LEFT JOIN dbo.PRODOTTI PR  WITH (NOLOCK) ON PR.ID_PRODOTTI      = OM.ID_PRODOTTI
+        WHERE QW.ID_QUEUEREASON IN (1,2)
+          AND QW.ID_QUEUEREASON_COMPLETE = 20
+          AND QW.DATESTART IS NOT NULL
+          AND QW.DATEEND   IS NOT NULL
+          AND QW.DATEEND >= @fromDT AND QW.DATEEND < @toDT
+          AND (
+                @search IS NULL OR @search = '' OR
+                O.RIF             LIKE '%' + @search + '%' OR
+                O.DESCR1_SPED     LIKE '%' + @search + '%' OR
+                QW.[USERNAME]     LIKE '%' + @search + '%' OR
+                QH.CDL_NAME       LIKE '%' + @search + '%' OR
+                WK.CODICE         LIKE '%' + @search + '%' OR
+                WK.DESCRIZIONE    LIKE '%' + @search + '%' OR
+                ISNULL(M.CODICE,'') LIKE '%' + @search + '%' OR
+                PR.RIF            LIKE '%' + @search + '%'
+              )
+      ),
+      ORDEN AS (
+        SELECT
+          b.*,
+          LAG(b.EventDT) OVER (
+            PARTITION BY b.PEDIDO, b.LINEA, b.ID_ITEMS
+            ORDER BY b.EventDT
+          ) AS PrevEventDT,
+          MIN(b.EventDT) OVER (PARTITION BY b.PEDIDO, b.LINEA, b.ID_ITEMS) AS MinEventDT,
+          MAX(b.EventDT) OVER (PARTITION BY b.PEDIDO, b.LINEA, b.ID_ITEMS) AS MaxEventDT
+        FROM BASE b
       )
-  AND (
-        @search IS NULL OR @search = '' OR
-        O.RIF             LIKE '%' + @search + '%' OR
-        O.DESCR1_SPED     LIKE '%' + @search + '%' OR
-        QW.[USERNAME]     LIKE '%' + @search + '%' OR
-        QH.CDL_NAME       LIKE '%' + @search + '%' OR
-        WK.CODICE         LIKE '%' + @search + '%' OR
-        WK.DESCRIZIONE    LIKE '%' + @search + '%' OR
-        ISNULL(M.CODICE,'') LIKE '%' + @search + '%' OR
-        PR.RIF            LIKE '%' + @search + '%'
-      );
+      SELECT
+        @usedFrom AS usedFrom,
+        @usedTo   AS usedTo,
+        COUNT(1)  AS total,
+        ISNULL(SUM(CAST(AREA AS float)), 0) AS area
+      FROM ORDEN;
 
--- ================== META ==================
-SELECT
-  @usedFrom AS usedFrom,
-  @usedTo   AS usedTo,
-  COUNT(*)                                      AS total,
-  ISNULL(SUM(CAST(PIEZAS AS float)), 0)         AS piezas,
-  ISNULL(SUM(CAST(AREA   AS float)), 0)         AS area
-FROM #BASE;
+      /* ===============================
+         2) ITEMS (con tiempos en segundos)
+         =============================== */
+      ;WITH BASE AS (
+        SELECT
+          O.RIF                     AS PEDIDO,
+          ISNULL(O.DESCR1_SPED,'')  AS NOMBRE,
+          OM.RIGA                   AS LINEA,
+          QH.CDL_NAME               AS CENTRO_TRABAJO,
+          QW.[USERNAME]             AS USERNAME,
+          WK.CODICE                 AS TRABAJO,
+          WK.DESCRIZIONE            AS DESC_TRABAJO,
+          ISNULL(M.CODICE, '')      AS VIDRIO,
+          (FLOOR(OD.ID_DETT/2)+1)   AS N_VIDRIO,
+          PR.RIF                    AS PRODUCTO,
+          DB.DIMXPZR                AS MEDIDA_X,
+          DB.DIMYPZR                AS MEDIDA_Y,
+          DB.AREA                   AS AREA,
+          OM.QTAPZ                  AS PZ_LIN,
+          QW.PROGR                  AS PROGR,
+          QW.DATESTART              AS FECHA_INICIO_OP,
+          QW.DATEEND                AS FECHA_FIN_OP,
+          COALESCE(QW.DATEEND,QW.DATESTART) AS EventDT,
+          O.DATAORD                 AS FECHA_PEDIDO,
+          O.DATACONS                AS FECHA_ENTREGA_PROG,
+          QW.ID_ITEMS,
+          QW.ID_ORDDETT
+        FROM dbo.QUEUEWORK    QW WITH (NOLOCK)
+        JOIN dbo.QUEUEHEADER  QH WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+        JOIN dbo.WORKKIND     WK WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+        JOIN dbo.ORDMAST      OM WITH (NOLOCK) ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+        JOIN dbo.ORDINI       O  WITH (NOLOCK) ON O.ID_ORDINI       = OM.ID_ORDINI
+        JOIN dbo.ORDDETT      OD WITH (NOLOCK) ON OD.ID_ORDDETT     = QW.ID_ORDDETT
+        LEFT JOIN dbo.MAGAZ   M  WITH (NOLOCK) ON M.ID_MAGAZ        = OD.ID_MAGAZ
+        LEFT JOIN dbo.ITEMS   IT WITH (NOLOCK) ON IT.ID_ITEMS       = QW.ID_ITEMS
+        LEFT JOIN dbo.DBASEORDINI DB WITH (NOLOCK) ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
+        LEFT JOIN dbo.PRODOTTI PR  WITH (NOLOCK) ON PR.ID_PRODOTTI      = OM.ID_PRODOTTI
+        WHERE QW.ID_QUEUEREASON IN (1,2)
+          AND QW.ID_QUEUEREASON_COMPLETE = 20
+          AND QW.DATESTART IS NOT NULL
+          AND QW.DATEEND   IS NOT NULL
+          AND QW.DATEEND >= @fromDT AND QW.DATEEND < @toDT
+          AND (
+                @search IS NULL OR @search = '' OR
+                O.RIF             LIKE '%' + @search + '%' OR
+                O.DESCR1_SPED     LIKE '%' + @search + '%' OR
+                QW.[USERNAME]     LIKE '%' + @search + '%' OR
+                QH.CDL_NAME       LIKE '%' + @search + '%' OR
+                WK.CODICE         LIKE '%' + @search + '%' OR
+                WK.DESCRIZIONE    LIKE '%' + @search + '%' OR
+                ISNULL(M.CODICE,'') LIKE '%' + @search + '%' OR
+                PR.RIF            LIKE '%' + @search + '%'
+              )
+      ),
+      ORDEN AS (
+        SELECT
+          b.*,
+          LAG(b.EventDT) OVER (
+            PARTITION BY b.PEDIDO, b.LINEA, b.ID_ITEMS
+            ORDER BY b.EventDT
+          ) AS PrevEventDT,
+          MIN(b.EventDT) OVER (PARTITION BY b.PEDIDO, b.LINEA, b.ID_ITEMS) AS MinEventDT,
+          MAX(b.EventDT) OVER (PARTITION BY b.PEDIDO, b.LINEA, b.ID_ITEMS) AS MaxEventDT
+        FROM BASE b
+      )
+      SELECT *
+      FROM (
+        SELECT
+          PEDIDO, NOMBRE,
+          LINEA, CENTRO_TRABAJO, USERNAME,
+          TRABAJO, DESC_TRABAJO, VIDRIO, N_VIDRIO, PRODUCTO,
+          MEDIDA_X, MEDIDA_Y, PZ_LIN, PROGR,
+          FECHA_INICIO_OP     AS inicio_op,
+          FECHA_FIN_OP        AS fin_op,
+          EventDT             AS eventdt,
+          FECHA_PEDIDO        AS fecha_pedido,
+          FECHA_ENTREGA_PROG  AS entrega_prog,
+          -- tiempos (segundos)
+          t_trabajo_seg = CASE WHEN FECHA_INICIO_OP IS NOT NULL AND FECHA_FIN_OP IS NOT NULL
+                               THEN DATEDIFF(SECOND, FECHA_INICIO_OP, FECHA_FIN_OP) END,
+          t_entre_operaciones_seg = CASE WHEN PrevEventDT IS NOT NULL
+                               THEN DATEDIFF(SECOND, PrevEventDT, EventDT) END,
+          t_espera_prev_maquina_seg = CASE WHEN PrevEventDT IS NOT NULL AND FECHA_INICIO_OP IS NOT NULL
+                               THEN DATEDIFF(SECOND, PrevEventDT, FECHA_INICIO_OP) END,
+          t_desde_pedido_seg = CASE WHEN FECHA_PEDIDO IS NOT NULL
+                               THEN DATEDIFF(SECOND, FECHA_PEDIDO, EventDT) END,
+          t_hasta_entrega_prog_seg = CASE WHEN FECHA_ENTREGA_PROG IS NOT NULL
+                               THEN DATEDIFF(SECOND, EventDT, FECHA_ENTREGA_PROG) END,
+          t_ciclo_pieza_total_seg = DATEDIFF(SECOND, MinEventDT, MaxEventDT)
+        FROM ORDEN
+      ) X
+      ORDER BY eventdt DESC
+      OFFSET @offset ROWS FETCH NEXT @fetch ROWS ONLY;
+    `);
 
--- ================== PAGE ==================
-SELECT *
-FROM (
-  SELECT
-    b.*,
-    COALESCE(CAST(b.DATAHORA_COMPL AS datetime), CAST(b.DATA_COMPLETE AS datetime)) AS EventDT
-  FROM #BASE b
-) X
-ORDER BY X.EventDT DESC
-OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
-`;
-
-    const result = await rq.query(query);
-
-    const meta  = result.recordsets?.[0]?.[0] || { total: 0, piezas: 0, area: 0, usedFrom: fromParam, usedTo: toParam };
-    const items = result.recordsets?.[1] || [];
+    const meta = result.recordsets[0]?.[0] || { usedFrom: null, usedTo: null, total: 0, area: 0 };
+    const items = result.recordsets[1] || [];
 
     return res.json({
+      status: 'ok',
       items,
       page: pageNum,
       pageSize: sizeNum,
-      total: meta.total,
-      from: fromParam || null,
-      to: toParam   || null,
+      total: meta.total || 0,
+      from: from || null,
+      to: to || null,
       usedFrom: meta.usedFrom,
       usedTo: meta.usedTo,
       orderBy: 'EventDT',
       orderDir: 'DESC',
-      agg: { piezas: meta.piezas, area: meta.area },
+      agg: { area: meta.area },
       scope
     });
   } catch (err) {
@@ -1484,6 +1601,7 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
     return res.status(500).json({ status: 'error', message: err.message });
   }
 });
+
 
 
 
