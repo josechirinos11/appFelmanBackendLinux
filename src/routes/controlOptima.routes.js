@@ -1375,92 +1375,88 @@ router.get('/piezas-maquina', async (req, res) => {
 
     const query = `
 SET NOCOUNT ON;
+USE OPTIMA_FELMAN;
 
-DECLARE @usedFrom date = @from, @usedTo date = @to;
+DECLARE @usedFrom DATE = @from;
+DECLARE @usedTo   DATE = @to;
 DECLARE @useDateFilter bit = CASE WHEN @usedFrom IS NULL OR @usedTo IS NULL THEN 0 ELSE 1 END;
 
--- ============================ BASE (sin vistas) =============================
--- Tomamos SOLO operaciones completadas: ID_QUEUEREASON in (1,2) y COMPLETE=20,
--- con fechas válidas y joins al pedido/línea/detalle/material.
-WITH BASE AS (
-  SELECT
-    O.RIF                                  AS PEDIDO,
-    ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
-    OM.RIGA                                AS LINEA,
-    CONVERT(date, QW.DATEEND)              AS DATA_COMPLETE,
-    QW.[USERNAME]                          AS USERNAME,
-    WK.CODICE                              AS TRABAJO,
-    WK.DESCRIZIONE                         AS DESC_TRABAJO,
-    QH.CDL_NAME                            AS CENTRO_TRABAJO,
-    CASE 
-      WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' 
-      ELSE ISNULL(M.CODICE,'')
-    END                                     AS VIDRIO,
-    CASE 
-      WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0 
-      ELSE FLOOR(OD.ID_DETT/2)+1 
-    END                                     AS N_VIDRIO,
-    CASE WHEN QW.ID_QUEUEREASON IN (1,2) THEN 'COMPLETE' ELSE '' END AS ESTADO,
-    QW.DATEEND                             AS DATAHORA_COMPL,
-    1                                      AS PIEZAS,
-    OD.DIMXPZR                             AS MEDIDA_X,
-    OD.DIMYPZR                             AS MEDIDA_Y,
-    CAST(OD.DIMXPZR*OD.DIMYPZR/1000000.0 AS decimal(18,6)) AS AREA,
-    OM.QTAPZ                               AS PZ_LIN,
-    QW.PROGR                               AS PROGR,
-    PR.RIF                                 AS PRODUCTO,
-    CAST(DB.PERIMETRO/1000.0 AS decimal(18,6)) AS PERIMETRO,
-    CASE WHEN WK.ID_TIPILAVORAZIONE = 301 AND WK.PRIOWORK IN (20,30) 
-         THEN CAST(DB.LENTOTBARRE/1000.0 AS decimal(18,6)) ELSE 0 END AS LONG_TRABAJO
-  FROM OPTIMA_FELMAN.dbo.QUEUEWORK    QW
-  JOIN OPTIMA_FELMAN.dbo.QUEUEHEADER  QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-  JOIN OPTIMA_FELMAN.dbo.WORKKIND     WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-  JOIN OPTIMA_FELMAN.dbo.ORDMAST      OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-  JOIN OPTIMA_FELMAN.dbo.ORDINI       O  ON O.ID_ORDINI       = OM.ID_ORDINI
-  JOIN OPTIMA_FELMAN.dbo.ORDDETT      OD ON OD.ID_ORDDETT     = QW.ID_ORDDETT
-  LEFT JOIN OPTIMA_FELMAN.dbo.MAGAZ   M  ON M.ID_MAGAZ        = OD.ID_MAGAZ
-  LEFT JOIN OPTIMA_FELMAN.dbo.ITEMS   IT ON IT.ID_ITEMS       = QW.ID_ITEMS
-  LEFT JOIN OPTIMA_FELMAN.dbo.DBASEORDINI DB ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
-  LEFT JOIN OPTIMA_FELMAN.dbo.PRODOTTI PR  ON PR.ID_PRODOTTI      = OM.ID_PRODOTTI
-  WHERE QW.ID_QUEUEREASON IN (1,2)
-    AND QW.ID_QUEUEREASON_COMPLETE = 20
-    AND QW.DATESTART IS NOT NULL
-    AND QW.DATEEND   IS NOT NULL
-    AND (
-          @useDateFilter = 0
-          OR QW.DATEEND >= DATEADD(DAY, DATEDIFF(DAY,0,@usedFrom), 0)
-         AND QW.DATEEND <  DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY,0,@usedTo), 0))
-        )
-    AND (
-          @search IS NULL OR @search = '' OR
-          O.RIF           LIKE '%' + @search + '%' OR
-          O.DESCR1_SPED   LIKE '%' + @search + '%' OR
-          QW.[USERNAME]   LIKE '%' + @search + '%' OR
-          QH.CDL_NAME     LIKE '%' + @search + '%' OR
-          WK.CODICE       LIKE '%' + @search + '%' OR
-          WK.DESCRIZIONE  LIKE '%' + @search + '%' OR
-          ISNULL(M.CODICE,'') LIKE '%' + @search + '%' OR
-          PR.RIF          LIKE '%' + @search + '%'
-        )
-)
--- ============================ META ===========================================
+IF OBJECT_ID('tempdb..#BASE') IS NOT NULL DROP TABLE #BASE;
+
+-- ================== LLENAR #BASE (sin vistas) ==================
+SELECT
+  O.RIF                                  AS PEDIDO,
+  ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
+  OM.RIGA                                AS LINEA,
+  CONVERT(date, QW.DATEEND)              AS DATA_COMPLETE,
+  QW.[USERNAME]                          AS USERNAME,
+  WK.CODICE                              AS TRABAJO,
+  WK.DESCRIZIONE                         AS DESC_TRABAJO,
+  QH.CDL_NAME                            AS CENTRO_TRABAJO,
+  CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' ELSE ISNULL(M.CODICE,'') END  AS VIDRIO,
+  CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0 ELSE FLOOR(OD.ID_DETT/2)+1 END AS N_VIDRIO,
+  CASE WHEN QW.ID_QUEUEREASON IN (1,2) THEN 'COMPLETE' ELSE '' END            AS ESTADO,
+  QW.DATEEND                             AS DATAHORA_COMPL,
+  CAST(1 AS INT)                         AS PIEZAS,
+  OD.DIMXPZR                             AS MEDIDA_X,
+  OD.DIMYPZR                             AS MEDIDA_Y,
+  CAST(OD.DIMXPZR*OD.DIMYPZR/1000000.0 AS decimal(18,6)) AS AREA,
+  OM.QTAPZ                               AS PZ_LIN,
+  QW.PROGR                               AS PROGR,
+  PR.RIF                                 AS PRODUCTO,
+  CAST(DB.PERIMETRO/1000.0 AS decimal(18,6)) AS PERIMETRO,
+  CASE WHEN WK.ID_TIPILAVORAZIONE = 301 AND WK.PRIOWORK IN (20,30)
+       THEN CAST(DB.LENTOTBARRE/1000.0 AS decimal(18,6)) ELSE 0 END AS LONG_TRABAJO
+INTO #BASE
+FROM dbo.QUEUEWORK    QW
+JOIN dbo.QUEUEHEADER  QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+JOIN dbo.WORKKIND     WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+JOIN dbo.ORDMAST      OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+JOIN dbo.ORDINI       O  ON O.ID_ORDINI       = OM.ID_ORDINI
+JOIN dbo.ORDDETT      OD ON OD.ID_ORDDETT     = QW.ID_ORDDETT
+LEFT JOIN dbo.MAGAZ   M  ON M.ID_MAGAZ        = OD.ID_MAGAZ
+LEFT JOIN dbo.ITEMS   IT ON IT.ID_ITEMS       = QW.ID_ITEMS
+LEFT JOIN dbo.DBASEORDINI DB ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
+LEFT JOIN dbo.PRODOTTI PR  ON PR.ID_PRODOTTI      = OM.ID_PRODOTTI
+WHERE QW.ID_QUEUEREASON IN (1,2)
+  AND QW.ID_QUEUEREASON_COMPLETE = 20
+  AND QW.DATESTART IS NOT NULL
+  AND QW.DATEEND   IS NOT NULL
+  AND (
+        @useDateFilter = 0
+        OR QW.DATEEND >= DATEADD(DAY, DATEDIFF(DAY,0,@usedFrom), 0)
+       AND QW.DATEEND <  DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY,0,@usedTo), 0))
+      )
+  AND (
+        @search IS NULL OR @search = '' OR
+        O.RIF             LIKE '%' + @search + '%' OR
+        O.DESCR1_SPED     LIKE '%' + @search + '%' OR
+        QW.[USERNAME]     LIKE '%' + @search + '%' OR
+        QH.CDL_NAME       LIKE '%' + @search + '%' OR
+        WK.CODICE         LIKE '%' + @search + '%' OR
+        WK.DESCRIZIONE    LIKE '%' + @search + '%' OR
+        ISNULL(M.CODICE,'') LIKE '%' + @search + '%' OR
+        PR.RIF            LIKE '%' + @search + '%'
+      );
+
+-- ================== META ==================
 SELECT
   @usedFrom AS usedFrom,
   @usedTo   AS usedTo,
-  COUNT(*)                                        AS total,
-  ISNULL(SUM(CAST(PIEZAS AS float)), 0)           AS piezas,
-  ISNULL(SUM(CAST(AREA   AS float)), 0)           AS area
-FROM BASE;
+  COUNT(*)                                      AS total,
+  ISNULL(SUM(CAST(PIEZAS AS float)), 0)         AS piezas,
+  ISNULL(SUM(CAST(AREA   AS float)), 0)         AS area
+FROM #BASE;
 
--- ============================ PAGE ===========================================
+-- ================== PAGE ==================
 SELECT *
 FROM (
   SELECT
-    *,
-    COALESCE(CAST(DATAHORA_COMPL AS datetime), CAST(DATA_COMPLETE AS datetime)) AS EventDT
-  FROM BASE
-) B
-ORDER BY B.EventDT DESC
+    b.*,
+    COALESCE(CAST(b.DATAHORA_COMPL AS datetime), CAST(b.DATA_COMPLETE AS datetime)) AS EventDT
+  FROM #BASE b
+) X
+ORDER BY X.EventDT DESC
 OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
 `;
 
