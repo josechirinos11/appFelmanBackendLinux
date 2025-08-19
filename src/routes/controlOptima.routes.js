@@ -1532,197 +1532,106 @@ router.get('/tiempos', async (req, res) => {
     //    - Respetando filtros de fecha o de pedido
     // 2) Luego calculamos tiempos por proceso + esperas (lag) y agregamos a nivel pedido+máquina y pedido+máquina+proceso
     const query = `
--- ================================
---  /piezas-maquina  (TABLAS DIRECTAS - SIN VISTAS)
--- ================================
 SET NOCOUNT ON;
+USE OPTIMA_FELMAN;
 
 DECLARE @usedFrom DATE = @from;
 DECLARE @usedTo   DATE = @to;
 DECLARE @useDateFilter bit = CASE WHEN @usedFrom IS NULL OR @usedTo IS NULL THEN 0 ELSE 1 END;
 
--- TAULA1: QUEUEWORK (completados)
-WITH TAULA1 AS (
-  SELECT
-    YEAR(CONVERT(date,Q.DATEEND))  AS ANO,
-    MONTH(CONVERT(date,Q.DATEEND)) AS MES,
-    ISNULL(P.DESCR1_SPED,'')       AS NOMBRE,
-    P.RIF                          AS PEDIDO,
-    O.RIGA                         AS LINEA,
-    CONVERT(date,Q.DATEEND)        AS DATA_COMPLETE,
-    Q.[USERNAME]                   AS USERNAME,
-    Q1.CDL_NAME                    AS CENTRO_TRABAJO,
-    W.CODICE                       AS TRABAJO,
-    W.DESCRIZIONE                  AS DESC_TRABAJO,
-    CASE WHEN Q1.CDL_NAME = 'LINEA_FOREL' THEN ''
-         ELSE ISNULL((SELECT M.CODICE
-                      FROM OPTIMA_FELMAN.dbo.MAGAZ M
-                      WHERE M.ID_MAGAZ = (SELECT ID_MAGAZ
-                                          FROM OPTIMA_FELMAN.dbo.ORDDETT
-                                          WHERE ID_ORDDETT = Q.ID_ORDDETT)),'')
-    END                            AS VIDRIO,
-    CASE WHEN Q1.CDL_NAME = 'LINEA_FOREL' THEN 0 ELSE FLOOR(O1.ID_DETT/2)+1 END AS N_VIDRIO,
-    CASE WHEN Q.ID_QUEUEREASON IN (1,2) AND Q.ID_QUEUEREASON_COMPLETE = 20 THEN 'COMPLETE' ELSE '' END AS ESTADO,
-    Q.DATEEND                      AS DATAHORA_COMPL,
-    CAST(1 AS INT)                 AS PIEZAS,
-    O1.DIMXPZR                     AS MEDIDA_X,
-    O1.DIMYPZR                     AS MEDIDA_Y,
-    Q.PROGR                        AS PROGR,
-    PR.RIF                         AS PRODUCTO,
-    CASE WHEN W.ID_TIPILAVORAZIONE = 301 AND W.PRIOWORK IN (20,30)
-         THEN D.LENTOTBARRE/1000.0 ELSE 0.0 END AS LONG_TRABAJO,
-    (O1.DIMXPZR*O1.DIMYPZR)/1000000.0  AS AREA,
-    O.QTAPZ                        AS PZ_LIN,
-    CAST('' AS NVARCHAR(200))      AS RAZON_QUEBRA1,
-    CAST('' AS NVARCHAR(200))      AS RAZON_QUEBRA2,
-    CAST('' AS NVARCHAR(200))      AS RAZON_QUEBRA3,
-    CAST('' AS NVARCHAR(4000))     AS TEXT1,
-    CAST(0  AS DECIMAL(18,4))      AS PREZZO_PZ,
-    D.ID_DBASEORDINI               AS ID_DBASEORDINI,
-    O.ID_ORDINI                    AS ID_ORDINI,
-    Q.DATESTART                    AS FECHA_INICIO_OP,     -- 👈 para espera previa
-    Q.DATEEND                      AS FECHA_FIN_OP,
-    CAST(NULL AS DATETIME)         AS FECHA_ROTURA,
-    DATEDIFF(SECOND, Q.DATESTART, Q.DATEEND) AS t_trabajo_seg
-  FROM OPTIMA_FELMAN.dbo.QUEUEWORK   Q
-  JOIN OPTIMA_FELMAN.dbo.QUEUEHEADER Q1 ON Q1.ID_QUEUEHEADER = Q.ID_QUEUEHEADER
-  JOIN OPTIMA_FELMAN.dbo.WORKKIND    W  ON W.ID_WORKKIND    = Q.ID_WORKKIND
-  JOIN OPTIMA_FELMAN.dbo.ORDMAST     O  ON O.ID_ORDMAST     = Q.ID_ORDMAST
-  JOIN OPTIMA_FELMAN.dbo.ORDINI      P  ON P.ID_ORDINI      = O.ID_ORDINI
-  JOIN OPTIMA_FELMAN.dbo.ORDDETT     O1 ON O1.ID_ORDDETT    = Q.ID_ORDDETT
-  JOIN OPTIMA_FELMAN.dbo.ITEMS       I  ON I.ID_ITEMS       = Q.ID_ITEMS
-  JOIN OPTIMA_FELMAN.dbo.DBASEORDINI D  ON D.ID_DBASEORDINI = I.ID_DBASEORDINI
-  JOIN OPTIMA_FELMAN.dbo.PRODOTTI    PR ON PR.ID_PRODOTTI   = O.ID_PRODOTTI
-  WHERE Q.ID_QUEUEREASON IN (1,2)
-    AND Q.ID_QUEUEREASON_COMPLETE = 20
-    AND Q.DATEEND IS NOT NULL
-    AND YEAR(Q.DATESTART) > 2018
-),
+IF OBJECT_ID('tempdb..#BASE') IS NOT NULL DROP TABLE #BASE;
 
--- TAULA2: TV (QALOG_VIEW) – no hay DATESTART/END: t_trabajo NULL
-TAULA2 AS (
-  SELECT
-    YEAR(CONVERT(date,Q.DATE_COMPL))   AS ANO,
-    MONTH(CONVERT(date,Q.DATE_COMPL))  AS MES,
-    O.DESCR1_SPED                      AS NOMBRE,
-    Q.RIF                               AS PEDIDO,
-    Q.RIGA                              AS LINEA,
-    CONVERT(date,Q.DATE_COMPL)          AS DATA_COMPLETE,
-    Q.[USERNAME]                        AS USERNAME,
-    CASE WHEN Q.VIRTMACHINE='TV' THEN C.BANCO ELSE Q.VIRTMACHINE END AS CENTRO_TRABAJO,
-    Q.FASE                              AS TRABAJO,
-    Q.FASE                              AS DESC_TRABAJO,
-    Q.CODMAT                            AS VIDRIO,
-    FLOOR(D.ID_DETT/2)+1                AS N_VIDRIO,
-    Q.ActionName                        AS ESTADO,
-    Q.ServerDateTime                    AS DATAHORA_COMPL,
-    Q.LAVQTY                            AS PIEZAS,
-    D.DIMXPZR                           AS MEDIDA_X,
-    D.DIMYPZR                           AS MEDIDA_Y,
-    Q.PROGR                             AS PROGR,
-    PR.RIF                              AS PRODUCTO,
-    CAST(0.0 AS DECIMAL(18,4))          AS LONG_TRABAJO,
-    D.AREA                              AS AREA,
-    D.QTAPZ                             AS PZ_LIN,
-    CAST('' AS NVARCHAR(200))           AS RAZON_QUEBRA1,
-    CAST('' AS NVARCHAR(200))           AS RAZON_QUEBRA2,
-    CAST('' AS NVARCHAR(200))           AS RAZON_QUEBRA3,
-    CAST('' AS NVARCHAR(4000))          AS TEXT1,
-    CAST(0  AS DECIMAL(18,4))           AS PREZZO_PZ,
-    D.ID_DBASEORDINI                    AS ID_DBASEORDINI,
-    O1.ID_ORDINI                        AS ID_ORDINI,
-    CAST(NULL AS DATETIME)              AS FECHA_INICIO_OP,
-    CAST(NULL AS DATETIME)              AS FECHA_FIN_OP,
-    CAST(NULL AS DATETIME)              AS FECHA_ROTURA,
-    CAST(NULL AS INT)                   AS t_trabajo_seg
-  FROM OPTIMA_FELMAN.dbo.QALOG_VIEW Q
-  JOIN OPTIMA_FELMAN.dbo.DBASEORDINI D ON D.ID_DBASEORDINI = Q.ID_DBASEORDINI
-  JOIN OPTIMA_FELMAN.dbo.ORDMAST     O1 ON O1.ID_ORDMAST  = Q.ID_ORDMAST
-  JOIN OPTIMA_FELMAN.dbo.ORDINI      O  ON O.ID_ORDINI    = Q.ID_ORDINI
-  JOIN OPTIMA_FELMAN.dbo.COMMESSE    C  ON C.ID_COMMESSE  = Q.ID_COMMESSE
-  JOIN OPTIMA_FELMAN.dbo.PRODOTTI    PR ON PR.ID_PRODOTTI = O1.ID_PRODOTTI
-  WHERE Q.VIRTMACHINE = 'TV'
-    AND YEAR(Q.DATE_COMPL) > 2018
-),
+-- ================== BASE: operaciones completadas (sin vistas) ==================
+SELECT
+  O.RIF                                  AS PEDIDO,
+  ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
+  OM.RIGA                                AS LINEA,
+  CONVERT(date, QW.DATEEND)              AS DATA_COMPLETE,
+  QW.[USERNAME]                          AS USERNAME,
+  WK.CODICE                              AS TRABAJO,
+  WK.DESCRIZIONE                         AS DESC_TRABAJO,
+  QH.CDL_NAME                            AS CENTRO_TRABAJO,
+  CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' ELSE ISNULL(M.CODICE,'') END  AS VIDRIO,
+  CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0 ELSE FLOOR(OD.ID_DETT/2)+1 END AS N_VIDRIO,
+  CASE WHEN QW.ID_QUEUEREASON IN (1,2) THEN 'COMPLETE' ELSE '' END            AS ESTADO,
+  QW.DATEEND                             AS DATAHORA_COMPL,
+  CAST(1 AS INT)                         AS PIEZAS,
+  OD.DIMXPZR                             AS MEDIDA_X,
+  OD.DIMYPZR                             AS MEDIDA_Y,
+  CAST(OD.DIMXPZR*OD.DIMYPZR/1000000.0 AS decimal(18,6)) AS AREA,
+  OM.QTAPZ                               AS PZ_LIN,
+  QW.PROGR                               AS PROGR,
+  PR.RIF                                 AS PRODUCTO,
+  CAST(DB.PERIMETRO/1000.0 AS decimal(18,6)) AS PERIMETRO,
+  CASE WHEN WK.ID_TIPILAVORAZIONE = 301 AND WK.PRIOWORK IN (20,30)
+       THEN CAST(DB.LENTOTBARRE/1000.0 AS decimal(18,6)) ELSE 0 END AS LONG_TRABAJO,
+  DB.ID_DBASEORDINI,
+  O.ID_ORDINI,
+  QW.DATESTART                           AS FECHA_INICIO_OP,
+  QW.DATEEND                             AS FECHA_FIN_OP,
+  CAST(NULL AS DATETIME)                 AS FECHA_ROTURA
+INTO #BASE
+FROM dbo.QUEUEWORK    QW
+JOIN dbo.QUEUEHEADER  QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+JOIN dbo.WORKKIND     WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+JOIN dbo.ORDMAST      OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+JOIN dbo.ORDINI       O  ON O.ID_ORDINI       = OM.ID_ORDINI
+JOIN dbo.ORDDETT      OD ON OD.ID_ORDDETT     = QW.ID_ORDDETT
+LEFT JOIN dbo.MAGAZ   M  ON M.ID_MAGAZ        = OD.ID_MAGAZ
+LEFT JOIN dbo.ITEMS   IT ON IT.ID_ITEMS       = QW.ID_ITEMS
+LEFT JOIN dbo.DBASEORDINI DB ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
+LEFT JOIN dbo.PRODOTTI PR  ON PR.ID_PRODOTTI      = OM.ID_PRODOTTI
+WHERE QW.ID_QUEUEREASON IN (1,2)
+  AND QW.ID_QUEUEREASON_COMPLETE = 20
+  AND QW.DATESTART IS NOT NULL
+  AND QW.DATEEND   IS NOT NULL
+  AND (
+        @useDateFilter = 0
+        OR QW.DATEEND >= DATEADD(DAY, DATEDIFF(DAY,0,@usedFrom), 0)
+       AND QW.DATEEND <  DATEADD(DAY, 1, DATEADD(DAY, DATEDIFF(DAY,0,@usedTo), 0))
+      )
+  AND (
+        @search IS NULL OR @search = '' OR
+        O.RIF             LIKE '%' + @search + '%' OR
+        O.DESCR1_SPED     LIKE '%' + @search + '%' OR
+        QW.[USERNAME]     LIKE '%' + @search + '%' OR
+        QH.CDL_NAME       LIKE '%' + @search + '%' OR
+        WK.CODICE         LIKE '%' + @search + '%' OR
+        WK.DESCRIZIONE    LIKE '%' + @search + '%' OR
+        ISNULL(M.CODICE,'') LIKE '%' + @search + '%' OR
+        PR.RIF            LIKE '%' + @search + '%'
+      );
 
--- ROTURAS (QUEUEWORK con BREAK=200)
-ROTURAS AS (
-  SELECT
-    YEAR(CONVERT(date,Q.DATEEND))  AS ANO,
-    MONTH(CONVERT(date,Q.DATEEND)) AS MES,
-    ISNULL(P.DESCR1_SPED,'')       AS NOMBRE,
-    P.RIF                          AS PEDIDO,
-    O.RIGA                         AS LINEA,
-    CONVERT(date,Q.DATEBROKEN)     AS DATA_COMPLETE,
-    Q.USERNAME_BREAK               AS USERNAME,
-    Q1.CDL_NAME                    AS CENTRO_TRABAJO,
-    W.CODICE                       AS TRABAJO,
-    W.DESCRIZIONE                  AS DESC_TRABAJO,
-    CASE WHEN Q1.CDL_NAME = 'LINEA_FOREL' THEN ''
-         ELSE ISNULL((SELECT M.CODICE
-                      FROM OPTIMA_FELMAN.dbo.MAGAZ M
-                      WHERE M.ID_MAGAZ = (SELECT ID_MAGAZ
-                                          FROM OPTIMA_FELMAN.dbo.ORDDETT
-                                          WHERE ID_ORDDETT = Q.ID_ORDDETT)),'')
-    END                            AS VIDRIO,
-    CASE WHEN Q1.CDL_NAME = 'LINEA_FOREL' THEN 0 ELSE FLOOR(O1.ID_DETT/2)+1 END AS N_VIDRIO,
-    CASE WHEN Q.ID_QUEUEREASON_BREAK = 200 THEN 'ROTURA' ELSE '' END AS ESTADO,
-    Q.DATEEND                      AS DATAHORA_COMPL,
-    CAST(1 AS INT)                 AS PIEZAS,
-    O1.DIMXPZR                     AS MEDIDA_X,
-    O1.DIMYPZR                     AS MEDIDA_Y,
-    Q.PROGR                        AS PROGR,
-    PR.RIF                         AS PRODUCTO,
-    CASE WHEN W.ID_TIPILAVORAZIONE = 301 AND W.PRIOWORK IN (20,30)
-         THEN D.LENTOTBARRE/1000.0 ELSE 0.0 END AS LONG_TRABAJO,
-    (O1.DIMXPZR*O1.DIMYPZR)/1000000.0  AS AREA,
-    O.QTAPZ                        AS PZ_LIN,
-    (SELECT REASON_DESCR FROM OPTIMA_FELMAN.dbo.QUEUEREASON T1 WHERE T1.ID_QUEUEREASON = Q.ID_QUEUEREASON_CAUPROD )  AS RAZON_QUEBRA1,
-    (SELECT REASON_DESCR FROM OPTIMA_FELMAN.dbo.QUEUEREASON T2 WHERE T2.ID_QUEUEREASON = Q.ID_QUEUEREASON_CAUPROD1)  AS RAZON_QUEBRA2,
-    (SELECT REASON_DESCR FROM OPTIMA_FELMAN.dbo.QUEUEREASON T3 WHERE T3.ID_QUEUEREASON = Q.ID_QUEUEREASON_CAUPROD2)  AS RAZON_QUEBRA3,
-    Q.TEXT1                        AS TEXT1,
-    O.PREZZO_PZ                    AS PREZZO_PZ,
-    D.ID_DBASEORDINI               AS ID_DBASEORDINI,
-    O.ID_ORDINI                    AS ID_ORDINI,
-    Q.DATESTART                    AS FECHA_INICIO_OP,
-    Q.DATEEND                      AS FECHA_FIN_OP,
-    Q.DATEBROKEN                   AS FECHA_ROTURA,
-    DATEDIFF(SECOND, Q.DATESTART, Q.DATEEND) AS t_trabajo_seg
-  FROM OPTIMA_FELMAN.dbo.QUEUEWORK   Q
-  JOIN OPTIMA_FELMAN.dbo.QUEUEHEADER Q1 ON Q1.ID_QUEUEHEADER = Q.ID_QUEUEHEADER
-  JOIN OPTIMA_FELMAN.dbo.WORKKIND    W  ON W.ID_WORKKIND    = Q.ID_WORKKIND
-  JOIN OPTIMA_FELMAN.dbo.ORDMAST     O  ON O.ID_ORDMAST     = Q.ID_ORDMAST
-  JOIN OPTIMA_FELMAN.dbo.ORDINI      P  ON P.ID_ORDINI      = O.ID_ORDINI
-  JOIN OPTIMA_FELMAN.dbo.ORDDETT     O1 ON O1.ID_ORDDETT    = Q.ID_ORDDETT
-  JOIN OPTIMA_FELMAN.dbo.ITEMS       I  ON I.ID_ITEMS       = Q.ID_ITEMS
-  JOIN OPTIMA_FELMAN.dbo.DBASEORDINI D  ON D.ID_DBASEORDINI = I.ID_DBASEORDINI
-  JOIN OPTIMA_FELMAN.dbo.PRODOTTI    PR ON PR.ID_PRODOTTI   = O.ID_PRODOTTI
-  WHERE Q.ID_QUEUEREASON_BREAK = 200
-    AND YEAR(Q.DATESTART) > 2018
-    AND Q.DATEEND IS NOT NULL
-),
-
--- BASE: union homogéneo
-BASE AS (
-  SELECT * FROM TAULA1
-  UNION ALL
-  SELECT * FROM TAULA2
-  UNION ALL
-  SELECT * FROM ROTURAS
-),
-
--- ENRICH: eventdt + fechas del pedido (DATAORD / DATACONS)
-ENRICH AS (
+-- ================== META ==================
+WITH ENRICH AS (
   SELECT
     b.*,
-    COALESCE(b.DATAHORA_COMPL, CAST(b.DATA_COMPLETE AS datetime)) AS eventdt,
-    O.DATAORD     AS fecha_pedido,
-    O.DATACONS    AS fecha_entrega_prog
-  FROM BASE b
-  LEFT JOIN OPTIMA_FELMAN.dbo.ORDINI O ON O.ID_ORDINI = b.ID_ORDINI
+    COALESCE(CAST(b.DATAHORA_COMPL AS datetime), CAST(b.DATA_COMPLETE AS datetime)) AS eventdt,
+    O.DATAORD   AS fecha_pedido,
+    O.DATACONS  AS fecha_entrega_prog
+  FROM #BASE b
+  LEFT JOIN dbo.ORDINI O ON O.ID_ORDINI = b.ID_ORDINI
+)
+SELECT
+  @usedFrom AS usedFrom,
+  @usedTo   AS usedTo,
+  COUNT(*)                                      AS total,
+  ISNULL(SUM(CAST(PIEZAS AS float)), 0)         AS piezas,
+  ISNULL(SUM(CAST(AREA   AS float)), 0)         AS area
+FROM ENRICH;
+
+-- ================== ITEMS (con tiempos + alias en minúsculas) ==================
+WITH ENRICH AS (
+  SELECT
+    b.*,
+    COALESCE(CAST(b.DATAHORA_COMPL AS datetime), CAST(b.DATA_COMPLETE AS datetime)) AS eventdt,
+    O.DATAORD   AS fecha_pedido,
+    O.DATACONS  AS fecha_entrega_prog
+  FROM #BASE b
+  LEFT JOIN dbo.ORDINI O ON O.ID_ORDINI = b.ID_ORDINI
   WHERE
-    (@useDateFilter = 0 OR (COALESCE(b.DATAHORA_COMPL, CAST(b.DATA_COMPLETE AS datetime)) >= @usedFrom
-                         AND COALESCE(b.DATAHORA_COMPL, CAST(b.DATA_COMPLETE AS datetime)) < DATEADD(DAY,1,@usedTo)))
+    (@useDateFilter = 0 OR (COALESCE(CAST(b.DATAHORA_COMPL AS datetime), CAST(b.DATA_COMPLETE AS datetime)) >= @usedFrom
+                         AND COALESCE(CAST(b.DATAHORA_COMPL AS datetime), CAST(b.DATA_COMPLETE AS datetime)) < DATEADD(DAY,1,@usedTo)))
     AND (
       @search IS NULL OR @search = '' OR
       b.PEDIDO         LIKE '%' + @search + '%' OR
@@ -1733,58 +1642,51 @@ ENRICH AS (
       b.VIDRIO         LIKE '%' + @search + '%' OR
       b.TRABAJO        LIKE '%' + @search + '%'
     )
-),
-
--- TIMES: diferencias con LAG y agregados de ciclo
-TIMES AS (
+)
+SELECT *
+FROM (
   SELECT
-    e.*,
-    -- entre operaciones (prev event -> actual event)
+    e.PEDIDO, e.NOMBRE, e.LINEA, e.DATA_COMPLETE, e.USERNAME, e.TRABAJO, e.DESC_TRABAJO,
+    e.CENTRO_TRABAJO, e.VIDRIO, e.N_VIDRIO, e.ESTADO, e.DATAHORA_COMPL,
+    e.PIEZAS, e.MEDIDA_X, e.MEDIDA_Y, e.AREA, e.PZ_LIN, e.PROGR, e.PRODUCTO, e.PERIMETRO, e.LONG_TRABAJO,
+
+    -- 👇 nombres EXACTOS que tu front espera (minúsculas)
+    e.eventdt,
+    e.FECHA_INICIO_OP   AS fecha_inicio_op,
+    e.FECHA_FIN_OP      AS fecha_fin_op,
+    e.FECHA_ROTURA      AS fecha_rotura,
+    e.fecha_pedido,
+    e.fecha_entrega_prog,
+
+    -- tiempos
+    CASE WHEN e.FECHA_INICIO_OP IS NOT NULL AND e.FECHA_FIN_OP IS NOT NULL
+         THEN DATEDIFF(SECOND, e.FECHA_INICIO_OP, e.FECHA_FIN_OP) END                   AS t_trabajo_seg,
+
+    CASE WHEN e.FECHA_INICIO_OP IS NOT NULL
+         THEN DATEDIFF(SECOND,
+                LAG(e.eventdt) OVER (PARTITION BY e.PEDIDO, e.LINEA, e.N_VIDRIO, e.ID_DBASEORDINI ORDER BY e.eventdt),
+                e.FECHA_INICIO_OP
+              )
+         END                                                                            AS t_espera_prev_maquina_seg,
+
     DATEDIFF(SECOND,
       LAG(e.eventdt) OVER (PARTITION BY e.PEDIDO, e.LINEA, e.N_VIDRIO, e.ID_DBASEORDINI ORDER BY e.eventdt),
       e.eventdt
-    ) AS t_entre_operaciones_seg,
+    )                                                                                   AS t_entre_operaciones_seg,
 
-    -- espera previa a máquina (prev event -> DATESTART actual). Sólo donde tenemos DATESTART (QUEUEWORK)
-    CASE
-      WHEN e.FECHA_INICIO_OP IS NOT NULL THEN
-        DATEDIFF(SECOND,
-          LAG(e.eventdt) OVER (PARTITION BY e.PEDIDO, e.LINEA, e.N_VIDRIO, e.ID_DBASEORDINI ORDER BY e.eventdt),
-          e.FECHA_INICIO_OP
-        )
-      ELSE NULL
-    END AS t_espera_prev_maquina_seg,
-
-    -- desde pedido (DATAORD -> eventdt)
     CASE WHEN e.fecha_pedido IS NOT NULL
-         THEN DATEDIFF(SECOND, e.fecha_pedido, e.eventdt) END AS t_desde_pedido_seg,
+         THEN DATEDIFF(SECOND, e.fecha_pedido, e.eventdt) END                           AS t_desde_pedido_seg,
 
-    -- hasta entrega prog (eventdt -> DATACONS)
     CASE WHEN e.fecha_entrega_prog IS NOT NULL
-         THEN DATEDIFF(SECOND, e.eventdt, e.fecha_entrega_prog) END AS t_hasta_entrega_prog_seg,
+         THEN DATEDIFF(SECOND, e.eventdt, e.fecha_entrega_prog) END                     AS t_hasta_entrega_prog_seg,
 
-    -- ciclo pieza total = (max event - min event) por pieza
-    DATEDIFF(
-      SECOND,
+    DATEDIFF(SECOND,
       MIN(e.eventdt) OVER (PARTITION BY e.PEDIDO, e.LINEA, e.N_VIDRIO, e.ID_DBASEORDINI),
       MAX(e.eventdt) OVER (PARTITION BY e.PEDIDO, e.LINEA, e.N_VIDRIO, e.ID_DBASEORDINI)
-    ) AS t_ciclo_pieza_total_seg
+    )                                                                                   AS t_ciclo_pieza_total_seg
   FROM ENRICH e
-)
-
--- META
-SELECT
-  @usedFrom AS usedFrom,
-  @usedTo   AS usedTo,
-  COUNT(*)                                        AS total,
-  ISNULL(SUM(CAST(PIEZAS AS float)), 0)           AS piezas,
-  ISNULL(SUM(CAST(AREA   AS float)), 0)           AS area
-FROM ENRICH;
-
--- ITEMS (ordenado y paginado)
-SELECT *
-FROM TIMES
-ORDER BY eventdt DESC
+) Z
+ORDER BY Z.eventdt DESC
 OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
 
     `;
