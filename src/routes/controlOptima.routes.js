@@ -1361,6 +1361,7 @@ router.get('/piezas-maquina', async (req, res) => {
       .input('q',        sql.NVarChar,  qTxt);
 
     const sqlText = `
+    USE OPTIMA_FELMAN
 SET NOCOUNT ON;
 
 DECLARE @from date = @fromS, @to date = @toS;
