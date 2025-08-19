@@ -1347,6 +1347,8 @@ router.get('/qw/lookups', async (req, res) => {
 // GET /control-optima/piezas-maquina
 // GET /control-optima/piezas-maquina
 // GET /control-optima/piezas-maquina
+
+// GET /control-optima/piezas-maquina
 router.get('/piezas-maquina', async (req, res) => {
   const pool = await poolPromise;
 
@@ -1355,7 +1357,6 @@ router.get('/piezas-maquina', async (req, res) => {
     from: fromStr,
     to: toStr,
     search: searchStr,
-    scope: scopeStr,
     page = 1,
     pageSize = 50,
   } = req.query || {};
@@ -1364,7 +1365,6 @@ router.get('/piezas-maquina', async (req, res) => {
   const from = fromStr ? new Date(fromStr) : null;
   const to = toStr ? new Date(toStr) : null;
   const search = (searchStr || '').trim();
-  const scope = (scopeStr || '').trim().toLowerCase(); // p.ej: 'pedido'
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const pageSz = Math.max(1, Math.min(500, parseInt(pageSize, 10) || 50));
   const offset = (pageNum - 1) * pageSz;
@@ -1372,11 +1372,10 @@ router.get('/piezas-maquina', async (req, res) => {
   try {
     const request = pool.request();
 
-    // --- Parámetros SQL (NO volver a volver a DECLARE) ---
+    // --- Parámetros SQL ---
     request.input('from', sql.DateTime, from || null);
     request.input('to', sql.DateTime, to || null);
     request.input('search', sql.NVarChar(100), search || null);
-    request.input('scope', sql.NVarChar(50), scope || null);
     request.input('offset', sql.Int, offset);
     request.input('pageSize', sql.Int, pageSz);
 
@@ -1387,6 +1386,8 @@ router.get('/piezas-maquina', async (req, res) => {
 DECLARE @usedFrom DATE = @from;
 DECLARE @usedTo   DATE = @to;
 DECLARE @useDateFilter bit = CASE WHEN @usedFrom IS NULL OR @usedTo IS NULL THEN 0 ELSE 1 END;
+
+IF OBJECT_ID('tempdb..#COMPUTED') IS NOT NULL DROP TABLE #COMPUTED;
 
 -- ================== BASE: piezas completadas ==================
 WITH BASE AS (
@@ -1418,7 +1419,7 @@ SELECT
   O.ID_ORDINI,
   QW.DATESTART                           AS FECHA_INICIO_OP,
   QW.DATEEND                             AS FECHA_FIN_OP,
-  CAST(NULL AS DATETIME)                 AS FECHA_ROTURA,
+  QW.DATEBROKEN                          AS FECHA_ROTURA,
   O.DATAORD                              AS fecha_pedido,
   O.DATACONS                             AS fecha_entrega_prog
 FROM OPTIMA_FELMAN.dbo.QUEUEWORK    AS QW   WITH (NOLOCK)
@@ -1456,7 +1457,28 @@ ORDENED AS (
     e.*,
     LAG(e.eventdt) OVER (PARTITION BY e.PEDIDO, e.LINEA, e.ID_ITEMS ORDER BY e.eventdt) AS prev_eventdt
   FROM ENRICH e
+),
+COMPUTED AS (
+  SELECT
+    o.*,
+    CASE WHEN o.FECHA_INICIO_OP IS NOT NULL AND o.FECHA_FIN_OP IS NOT NULL
+         THEN DATEDIFF(SECOND, o.FECHA_INICIO_OP, o.FECHA_FIN_OP) END                   AS t_trabajo_seg,
+    CASE WHEN o.prev_eventdt IS NOT NULL AND o.FECHA_INICIO_OP IS NOT NULL
+         THEN DATEDIFF(SECOND, o.prev_eventdt, o.FECHA_INICIO_OP) END                   AS t_espera_prev_maquina_seg,
+    CASE WHEN o.prev_eventdt IS NOT NULL
+         THEN DATEDIFF(SECOND, o.prev_eventdt, o.eventdt) END                           AS t_entre_operaciones_seg,
+    CASE WHEN o.fecha_pedido IS NOT NULL
+         THEN DATEDIFF(SECOND, o.fecha_pedido, o.eventdt) END                           AS t_desde_pedido_seg,
+    CASE WHEN o.fecha_entrega_prog IS NOT NULL
+         THEN DATEDIFF(SECOND, o.eventdt, o.fecha_entrega_prog) END                     AS t_hasta_entrega_prog_seg,
+    DATEDIFF(SECOND,
+      MIN(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS),
+      MAX(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS)
+    )                                                                                   AS t_ciclo_pieza_total_seg
+  FROM ORDENED o
 )
+
+SELECT * INTO #COMPUTED FROM COMPUTED;
 
 -- ================ META =================
 SELECT
@@ -1465,35 +1487,27 @@ SELECT
   COUNT(*)                                        AS total,
   ISNULL(SUM(CAST(PIEZAS AS float)), 0)           AS piezas,
   ISNULL(SUM(CAST(AREA   AS float)), 0)           AS area
-FROM ORDENED;
+FROM #COMPUTED;
 
 -- ================ ITEMS (paginado) ================
 SELECT
-  o.PEDIDO, o.NOMBRE, o.LINEA, o.DATA_COMPLETE, o.USERNAME, o.TRABAJO, o.DESC_TRABAJO,
-  o.CENTRO_TRABAJO, o.VIDRIO, o.N_VIDRIO, o.ESTADO, o.DATAHORA_COMPL,
-  o.PIEZAS, o.MEDIDA_X, o.MEDIDA_Y, o.AREA, o.PZ_LIN, o.PROGR, o.PRODUCTO, o.PERIMETRO, o.LONG_TRABAJO,
-  o.eventdt,
-  o.FECHA_INICIO_OP   AS fecha_inicio_op,
-  o.FECHA_FIN_OP      AS fecha_fin_op,
-  o.FECHA_ROTURA      AS fecha_rotura,
-  o.fecha_pedido,
-  o.fecha_entrega_prog,
-  CASE WHEN o.FECHA_INICIO_OP IS NOT NULL AND o.FECHA_FIN_OP IS NOT NULL
-       THEN DATEDIFF(SECOND, o.FECHA_INICIO_OP, o.FECHA_FIN_OP) END                   AS t_trabajo_seg,
-  CASE WHEN o.prev_eventdt IS NOT NULL AND o.FECHA_INICIO_OP IS NOT NULL
-       THEN DATEDIFF(SECOND, o.prev_eventdt, o.FECHA_INICIO_OP) END                   AS t_espera_prev_maquina_seg,
-  CASE WHEN o.prev_eventdt IS NOT NULL
-       THEN DATEDIFF(SECOND, o.prev_eventdt, o.eventdt) END                           AS t_entre_operaciones_seg,
-  CASE WHEN o.fecha_pedido IS NOT NULL
-       THEN DATEDIFF(SECOND, o.fecha_pedido, o.eventdt) END                           AS t_desde_pedido_seg,
-  CASE WHEN o.fecha_entrega_prog IS NOT NULL
-       THEN DATEDIFF(SECOND, o.eventdt, o.fecha_entrega_prog) END                     AS t_hasta_entrega_prog_seg,
-  DATEDIFF(SECOND,
-    MIN(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS),
-    MAX(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS)
-  )                                                                                   AS t_ciclo_pieza_total_seg
-FROM ORDENED o
-ORDER BY o.eventdt DESC
+  PEDIDO, NOMBRE, LINEA, DATA_COMPLETE, USERNAME, TRABAJO, DESC_TRABAJO,
+  CENTRO_TRABAJO, VIDRIO, N_VIDRIO, ESTADO, DATAHORA_COMPL,
+  PIEZAS, MEDIDA_X, MEDIDA_Y, AREA, PZ_LIN, PROGR, PRODUCTO, PERIMETRO, LONG_TRABAJO,
+  eventdt,
+  FECHA_INICIO_OP   AS fecha_inicio_op,
+  FECHA_FIN_OP      AS fecha_fin_op,
+  FECHA_ROTURA      AS fecha_rotura,
+  fecha_pedido,
+  fecha_entrega_prog,
+  t_trabajo_seg,
+  t_espera_prev_maquina_seg,
+  t_entre_operaciones_seg,
+  t_desde_pedido_seg,
+  t_hasta_entrega_prog_seg,
+  t_ciclo_pieza_total_seg
+FROM #COMPUTED
+ORDER BY eventdt DESC
 OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
     `;
 
