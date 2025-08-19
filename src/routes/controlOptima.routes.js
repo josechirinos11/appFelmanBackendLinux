@@ -1345,7 +1345,7 @@ router.get('/qw/lookups', async (req, res) => {
 // ========================= RUTA: /piezas-maquina =========================
 // GET /piezas-maquina?scope=ytd|mtd&from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=100&search=texto
 // GET /control-optima/piezas-maquina
-router.get('/control-optima/piezas-maquina', async (req, res) => {
+router.get('/piezas-maquina', async (req, res) => {
   const pool = await poolPromise;
 
   // --- Parámetros de entrada del cliente ---
