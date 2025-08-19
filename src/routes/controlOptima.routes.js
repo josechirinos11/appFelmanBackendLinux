@@ -1332,10 +1332,11 @@ router.get('/qw/lookups', async (req, res) => {
 // GET /control-optima/piezas-maquina
 // === PIEZAS POR MÁQUINA (corregido con tiempos) ===============================
 // GET /control-optima/piezas-maquina?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=500&search=...
+// === PIEZAS POR MÁQUINA (corregido sin GREATEST) ===============================
+// GET /control-optima/piezas-maquina?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=500&search=...
 router.get('/piezas-maquina', async (req, res) => {
   const { from, to, page = '1', pageSize = '500', search = '' } = req.query;
 
-  // Sanitizar fechas
   const cleanYMD = (s) => (typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.trim())) ? s.trim() : null;
   const today = new Date(); const pad = n => (n<10?'0'+n:n);
   const todayIso = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
@@ -1397,7 +1398,6 @@ WITH TAULA1 AS ( /* QUEUEWORK completadas */
     CAST(NULL AS nvarchar(max)) AS TEXT1,
     CAST(0 AS decimal(18,4)) AS PREZZO_PZ,
     DB.ID_DBASEORDINI AS ID_DBASEORDINI,
-    /* campos crudos para tiempos */
     Q.DATESTART,
     Q.DATEEND
   FROM dbo.QUEUEWORK Q
@@ -1444,7 +1444,6 @@ TAULA2 AS ( /* QALOG TV -> sin duración, usamos DATE_COMPL */
     CAST(NULL AS nvarchar(max)) AS TEXT1,
     CAST(0 AS decimal(18,4)) AS PREZZO_PZ,
     DB.ID_DBASEORDINI AS ID_DBASEORDINI,
-    /* sin info de duración: start=end */
     QA.ServerDateTime AS DATESTART,
     QA.ServerDateTime AS DATEEND
   FROM dbo.QALOG_VIEW QA
@@ -1488,7 +1487,6 @@ ROTURAS AS ( /* roturas (informativas) */
     Q.TEXT1 AS TEXT1,
     CAST(OI.PREZZO_PZ AS decimal(18,4)) AS PREZZO_PZ,
     DB.ID_DBASEORDINI AS ID_DBASEORDINI,
-    /* para tiempos (sin start, usamos DATEEND como proxy) */
     Q.DATEEND AS DATESTART,
     Q.DATEEND AS DATEEND
   FROM dbo.QUEUEWORK Q
@@ -1503,13 +1501,13 @@ ROTURAS AS ( /* roturas (informativas) */
   WHERE Q.ID_QUEUEREASON_BREAK = 200
 )
 
-, U AS ( /* Unión */
+, U AS (
   SELECT * FROM TAULA1
   UNION ALL SELECT * FROM TAULA2
   UNION ALL SELECT * FROM ROTURAS
 )
 
-, UF AS ( /* Filtrado por rango + búsqueda */
+, UF AS (
   SELECT U.*
   FROM U
   WHERE U.DATEEND >= @ini AND U.DATEEND < @fin
@@ -1520,7 +1518,7 @@ ROTURAS AS ( /* roturas (informativas) */
     )
 )
 
-, RN AS ( /* De-duplicación por simultáneos (misma pieza/tiempo/máquina) */
+, RN AS ( /* De-duplicación de simultáneos */
   SELECT
     UF.*,
     ROW_NUMBER() OVER (
@@ -1533,27 +1531,37 @@ ROTURAS AS ( /* roturas (informativas) */
 , ENRICH AS ( /* Cálculos de tiempos por pedido */
   SELECT
     R.*,
-    /* Duración de la operación (única si hay duplicados) */
+    /* Duración (solo cuenta una de las filas simultáneas) */
     CASE WHEN R.rn_same = 1 THEN DATEDIFF(SECOND, R.DATESTART, R.DATEEND) ELSE 0 END AS t_trabajo_seg,
 
-    /* Espera entre operaciones del mismo pedido (global) */
+    /* Espera entre operaciones del mismo pedido (recortada a 0) */
     CASE
       WHEN LAG(R.DATEEND) OVER (PARTITION BY R.PEDIDO ORDER BY R.DATESTART, R.DATEEND) IS NULL THEN NULL
-      ELSE GREATEST(
-             DATEDIFF(SECOND,
-               LAG(R.DATEEND) OVER (PARTITION BY R.PEDIDO ORDER BY R.DATESTART, R.DATEEND),
-               R.DATESTART
-             ), 0)
+      ELSE
+        CASE
+          WHEN DATEDIFF(SECOND,
+                        LAG(R.DATEEND) OVER (PARTITION BY R.PEDIDO ORDER BY R.DATESTART, R.DATEEND),
+                        R.DATESTART) > 0
+          THEN DATEDIFF(SECOND,
+                        LAG(R.DATEEND) OVER (PARTITION BY R.PEDIDO ORDER BY R.DATESTART, R.DATEEND),
+                        R.DATESTART)
+          ELSE 0
+        END
     END AS t_espera_prev_maquina_seg,
 
-    /* Espera entre operaciones en la misma máquina */
+    /* Espera entre operaciones en la misma máquina (recortada a 0) */
     CASE
       WHEN LAG(R.DATEEND) OVER (PARTITION BY R.PEDIDO, R.CENTRO_TRABAJO ORDER BY R.DATESTART, R.DATEEND) IS NULL THEN NULL
-      ELSE GREATEST(
-             DATEDIFF(SECOND,
-               LAG(R.DATEEND) OVER (PARTITION BY R.PEDIDO, R.CENTRO_TRABAJO ORDER BY R.DATESTART, R.DATEEND),
-               R.DATESTART
-             ), 0)
+      ELSE
+        CASE
+          WHEN DATEDIFF(SECOND,
+                        LAG(R.DATEEND) OVER (PARTITION BY R.PEDIDO, R.CENTRO_TRABAJO ORDER BY R.DATESTART, R.DATEEND),
+                        R.DATESTART) > 0
+          THEN DATEDIFF(SECOND,
+                        LAG(R.DATEEND) OVER (PARTITION BY R.PEDIDO, R.CENTRO_TRABAJO ORDER BY R.DATESTART, R.DATEEND),
+                        R.DATESTART)
+          ELSE 0
+        END
     END AS t_entre_operaciones_seg,
 
     /* Primer inicio del pedido */
@@ -1561,19 +1569,29 @@ ROTURAS AS ( /* roturas (informativas) */
   FROM RN R
 )
 
-, ENRICH2 AS ( /* Fechas de pedido/entrega desde la vista de estado (si existe) */
+, ENRICH2 AS ( /* Fechas de pedido/entrega y derivados */
   SELECT
     E.*,
     V.FechaPedido   AS fecha_pedido,
     V.FechaEntrega  AS fecha_entrega_prog,
 
-    /* Desde pedido (si hay fecha), y ciclo total hasta este fin */
-    CASE WHEN V.FechaPedido IS NULL THEN NULL
-         ELSE GREATEST(DATEDIFF(SECOND, V.FechaPedido, E.DATESTART), 0) END AS t_desde_pedido_seg,
+    /* Desde pedido (si negativo => 0) */
+    CASE
+      WHEN V.FechaPedido IS NULL THEN NULL
+      ELSE
+        CASE
+          WHEN DATEDIFF(SECOND, V.FechaPedido, E.DATESTART) < 0 THEN 0
+          ELSE DATEDIFF(SECOND, V.FechaPedido, E.DATESTART)
+        END
+    END AS t_desde_pedido_seg,
 
-    CASE WHEN V.FechaEntrega IS NULL THEN NULL
-         ELSE DATEDIFF(SECOND, E.DATEEND, V.FechaEntrega) END AS t_hasta_entrega_prog_seg, -- puede ser <0 si ya pasó
+    /* Hasta entrega programada (puede ser negativo si ya pasó) */
+    CASE
+      WHEN V.FechaEntrega IS NULL THEN NULL
+      ELSE DATEDIFF(SECOND, E.DATEEND, V.FechaEntrega)
+    END AS t_hasta_entrega_prog_seg,
 
+    /* Ciclo total hasta el fin actual */
     DATEDIFF(SECOND, E.first_start, E.DATEEND) AS t_ciclo_pieza_total_seg
   FROM ENRICH E
   LEFT JOIN dbo.DASHBOARD_STATUS_ORDER_VIEW V
@@ -1584,7 +1602,6 @@ SELECT *
 FROM (
   SELECT
     X.*,
-    /* eventdt en minúsculas para el front */
     X.DATEEND AS eventdt,
     COUNT(*) OVER() AS total_count
   FROM ENRICH2 X
@@ -1613,6 +1630,7 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
     return res.status(500).json({ ok: false, message: err.message });
   }
 });
+
 
 
 
