@@ -1345,6 +1345,7 @@ router.get('/qw/lookups', async (req, res) => {
 // ========================= RUTA: /piezas-maquina =========================
 // GET /piezas-maquina?scope=ytd|mtd&from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=100&search=texto
 // GET /control-optima/piezas-maquina
+// GET /control-optima/piezas-maquina
 router.get('/piezas-maquina', async (req, res) => {
   const pool = await poolPromise;
 
@@ -1378,31 +1379,6 @@ router.get('/piezas-maquina', async (req, res) => {
     request.input('offset', sql.Int, offset);
     request.input('pageSize', sql.Int, pageSz);
 
-    // --- WHERE dinámico con parámetros (sin concatenar strings peligrosos) ---
-    // Filtro de texto: por ahora soportamos scope='pedido' buscando en OI.RIF.
-    // Si no hay scope o search, no se aplica este filtro.
-    const whereScope = `
-      (
-        @scope IS NULL 
-        OR @scope = '' 
-        OR (
-          @scope = 'pedido' 
-          AND @search IS NOT NULL 
-          AND @search <> '' 
-          AND OI.RIF LIKE '%' + @search + '%'
-        )
-      )
-    `;
-
-    // Filtro por fechas (eventdt). Si no se pasan, no filtra.
-    const whereDates = `
-      (
-        (@from IS NULL OR COALESCE(QW.DATEEND, QW.DATESTART) >= @from)
-        AND
-        (@to   IS NULL OR COALESCE(QW.DATEEND, QW.DATESTART) <= @to)
-      )
-    `;
-
     // --- Consulta principal ---
     const query = `
       SET NOCOUNT ON;
@@ -1411,9 +1387,8 @@ DECLARE @usedFrom DATE = @from;
 DECLARE @usedTo   DATE = @to;
 DECLARE @useDateFilter bit = CASE WHEN @usedFrom IS NULL OR @usedTo IS NULL THEN 0 ELSE 1 END;
 
-IF OBJECT_ID('tempdb..#BASE') IS NOT NULL DROP TABLE #BASE;
-
 -- ================== BASE: piezas completadas ==================
+WITH BASE AS (
 SELECT
   O.RIF                                  AS PEDIDO,
   ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
@@ -1438,11 +1413,13 @@ SELECT
   CASE WHEN WK.ID_TIPILAVORAZIONE = 301 AND WK.PRIOWORK IN (20,30)
        THEN CAST(DB.LENTOTBARRE/1000.0 AS decimal(18,6)) ELSE 0 END AS LONG_TRABAJO,
   DB.ID_DBASEORDINI,
+  QW.ID_ITEMS,
   O.ID_ORDINI,
   QW.DATESTART                           AS FECHA_INICIO_OP,
   QW.DATEEND                             AS FECHA_FIN_OP,
-  CAST(NULL AS DATETIME)                 AS FECHA_ROTURA
-INTO #BASE
+  CAST(NULL AS DATETIME)                 AS FECHA_ROTURA,
+  O.DATAORD                              AS fecha_pedido,
+  O.DATACONS                             AS fecha_entrega_prog
 FROM OPTIMA_FELMAN.dbo.QUEUEWORK    AS QW   WITH (NOLOCK)
 JOIN OPTIMA_FELMAN.dbo.QUEUEHEADER  AS QH   WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
 JOIN OPTIMA_FELMAN.dbo.WORKKIND     AS WK   WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
@@ -1452,7 +1429,7 @@ JOIN OPTIMA_FELMAN.dbo.ORDDETT      AS OD   WITH (NOLOCK) ON OD.ID_ORDDETT     =
 LEFT JOIN OPTIMA_FELMAN.dbo.MAGAZ   AS M    WITH (NOLOCK) ON M.ID_MAGAZ        = OD.ID_MAGAZ
 LEFT JOIN OPTIMA_FELMAN.dbo.ITEMS   AS IT   WITH (NOLOCK) ON IT.ID_ITEMS       = QW.ID_ITEMS
 LEFT JOIN OPTIMA_FELMAN.dbo.DBASEORDINI AS DB WITH (NOLOCK) ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
-LEFT JOIN OPTIMA_FELMAN.dbo.PRODOTTI    AS PR WITH (NOLOCK) ON PR.ID_PRODOTTI  = O.ID_PRODOTTI
+LEFT JOIN OPTIMA_FELMAN.dbo.PRODOTTI    AS PR WITH (NOLOCK) ON PR.ID_PRODOTTI  = OM.ID_PRODOTTI
 WHERE QW.ID_QUEUEREASON IN (1,2)
   AND QW.ID_QUEUEREASON_COMPLETE = 20
   AND QW.DATEEND IS NOT NULL
@@ -1465,7 +1442,20 @@ WHERE QW.ID_QUEUEREASON IN (1,2)
         OR WK.CODICE       LIKE '%' + @search + '%'
         OR QH.CDL_NAME     LIKE '%' + @search + '%'
         OR PR.RIF          LIKE '%' + @search + '%'
-        OR ISNULL(M.CODICE,'') LIKE '%' + @search + '%' );
+        OR ISNULL(M.CODICE,'') LIKE '%' + @search + '%' )
+),
+ENRICH AS (
+  SELECT
+    b.*,
+    COALESCE(b.DATAHORA_COMPL, CAST(b.DATA_COMPLETE AS datetime)) AS eventdt
+  FROM BASE b
+),
+ORDEN AS (
+  SELECT
+    e.*,
+    LAG(e.eventdt) OVER (PARTITION BY e.PEDIDO, e.LINEA, e.ID_ITEMS ORDER BY e.eventdt) AS prev_eventdt
+  FROM ENRICH e
+)
 
 -- ================ META =================
 SELECT
@@ -1474,29 +1464,48 @@ SELECT
   COUNT(*)                                        AS total,
   ISNULL(SUM(CAST(PIEZAS AS float)), 0)           AS piezas,
   ISNULL(SUM(CAST(AREA   AS float)), 0)           AS area
-FROM #BASE;
+FROM ORDEN;
 
 -- ================ ITEMS (paginado) ================
-SELECT *
-FROM (
-  SELECT 
-    b.*,
-    COALESCE(b.DATAHORA_COMPL, CAST(b.DATA_COMPLETE AS datetime)) AS EventDT
-  FROM #BASE b
-) z
-ORDER BY z.EventDT DESC
+SELECT
+  o.PEDIDO, o.NOMBRE, o.LINEA, o.DATA_COMPLETE, o.USERNAME, o.TRABAJO, o.DESC_TRABAJO,
+  o.CENTRO_TRABAJO, o.VIDRIO, o.N_VIDRIO, o.ESTADO, o.DATAHORA_COMPL,
+  o.PIEZAS, o.MEDIDA_X, o.MEDIDA_Y, o.AREA, o.PZ_LIN, o.PROGR, o.PRODUCTO, o.PERIMETRO, o.LONG_TRABAJO,
+  o.eventdt,
+  o.FECHA_INICIO_OP   AS fecha_inicio_op,
+  o.FECHA_FIN_OP      AS fecha_fin_op,
+  o.FECHA_ROTURA      AS fecha_rotura,
+  o.fecha_pedido,
+  o.fecha_entrega_prog,
+  CASE WHEN o.FECHA_INICIO_OP IS NOT NULL AND o.FECHA_FIN_OP IS NOT NULL
+       THEN DATEDIFF(SECOND, o.FECHA_INICIO_OP, o.FECHA_FIN_OP) END                   AS t_trabajo_seg,
+  CASE WHEN o.prev_eventdt IS NOT NULL AND o.FECHA_INICIO_OP IS NOT NULL
+       THEN DATEDIFF(SECOND, o.prev_eventdt, o.FECHA_INICIO_OP) END                   AS t_espera_prev_maquina_seg,
+  CASE WHEN o.prev_eventdt IS NOT NULL
+       THEN DATEDIFF(SECOND, o.prev_eventdt, o.eventdt) END                           AS t_entre_operaciones_seg,
+  CASE WHEN o.fecha_pedido IS NOT NULL
+       THEN DATEDIFF(SECOND, o.fecha_pedido, o.eventdt) END                           AS t_desde_pedido_seg,
+  CASE WHEN o.fecha_entrega_prog IS NOT NULL
+       THEN DATEDIFF(SECOND, o.eventdt, o.fecha_entrega_prog) END                     AS t_hasta_entrega_prog_seg,
+  DATEDIFF(SECOND,
+    MIN(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS),
+    MAX(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS)
+  )                                                                                   AS t_ciclo_pieza_total_seg
+FROM ORDEN o
+ORDER BY o.eventdt DESC
 OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
     `;
 
     const result = await request.query(query);
-    const rows = result?.recordset || [];
+    const meta = result.recordsets[0][0] || { total: 0, piezas: 0, area: 0, usedFrom: from, usedTo: to };
+    const items = result.recordsets[1] || [];
 
     res.json({
       ok: true,
       page: pageNum,
       pageSize: pageSz,
-      count: rows.length,
-      rows,
+      total: meta.total,
+      items,
     });
   } catch (err) {
     console.error('❌ /piezas-maquina ERROR:', err);
