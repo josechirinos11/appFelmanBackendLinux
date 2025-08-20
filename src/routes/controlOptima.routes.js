@@ -1446,7 +1446,7 @@ router.get('/piezas-maquina', async (req, res) => {
             MAX(eventdt) OVER (PARTITION BY pedido, linea, ID_ITEMS)
           )
       FROM ORDEN
-      ORDER BY pedido, linea, eventdt;
+      ORDER BY pedido;
     `;
 
     const request = pool.request();
