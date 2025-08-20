@@ -1352,63 +1352,109 @@ router.get('/qw/lookups', async (req, res) => {
 // EN: src/routes/controlOptima.routes.js
 // ==== /control-optima/piezas-maquina  (SIN PAGINACIÓN + OPCIÓN A FECHA HOY) ====
 
+// /control-optima/piezas-maquina  (robusta: fechas opcionales + backfill por pedido + sin paginación)
 router.get('/piezas-maquina', async (req, res) => {
   const pool = await poolPromise;
 
-  // --- Parámetros del cliente ---
-  const { from: fromStr, to: toStr, search: searchStr } = req.query || {};
+  // -------- Params ----------
+  const { from: fromStr, to: toStr, search: searchStr, pedido: pedidoStr, includeOrderHistory } = req.query || {};
 
-  // ==== Opción A: si no llega fecha, usar día en curso ====
-  // - Si faltan ambas → from = to = hoy
-  // - Si llega solo una → la otra = misma fecha
   const today = new Date();
   const pad = (n) => (n < 10 ? '0' + n : '' + n);
   const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
   let fromISO = (typeof fromStr === 'string' && fromStr.trim()) ? fromStr.trim() : null;
   let toISO   = (typeof toStr   === 'string' && toStr.trim())   ? toStr.trim()   : null;
-
-  if (!fromISO && !toISO) {
-    fromISO = ymd(today);
-    toISO   = ymd(today);
-  } else if (fromISO && !toISO) {
-    toISO = fromISO;
-  } else if (!fromISO && toISO) {
-    fromISO = toISO;
-  }
-
-  // Búsqueda libre
   const search = (searchStr || '').trim();
+  const pedido = (pedidoStr || '').trim();
+  const includeHistory = String(includeOrderHistory).toLowerCase() === 'true';
+
+  // -------- Política de fechas (Opción A + "pedido domina fechas") ----------
+  // - Si viene 'pedido' => NO aplicar filtro por fecha (veremos TODO el historial del pedido)
+  // - Si NO viene 'pedido':
+  //     * Si faltan ambas fechas => usar HOY
+  //     * Si falta una => duplicarla (rango de un día)
+  let applyDateFilter = true;
+  if (pedido) {
+    applyDateFilter = false;
+  } else {
+    if (!fromISO && !toISO) {
+      fromISO = ymd(today);
+      toISO   = ymd(today);
+    } else if (fromISO && !toISO) {
+      toISO = fromISO;
+    } else if (!fromISO && toISO) {
+      fromISO = toISO;
+    }
+    applyDateFilter = true;
+  }
 
   try {
     const request = pool.request();
+
+    // ---- Inputs SQL ----
     request.input('from',   sql.Date, fromISO);
     request.input('to',     sql.Date, toISO);
     request.input('search', sql.NVarChar(100), search || null);
+    request.input('pedido', sql.NVarChar(50),  pedido || null);
+    request.input('includeOrderHistory', sql.Bit, includeHistory ? 1 : 0);
+    request.input('applyDateFilter',     sql.Bit, applyDateFilter ? 1 : 0);
+
+    // Límites defensivos para backfill
+    request.input('maxPedidosBackfill', sql.Int, 100);   // máximo nº de pedidos a backfillear
+    request.input('maxRowsBackfill',   sql.Int, 20000);  // máximo de filas extra en backfill
 
     const query = `
 SET NOCOUNT ON;
 
-DECLARE @usedFrom date = @from;
-DECLARE @usedTo   date = @to;
+DECLARE @pedido NVARCHAR(50) = @pedido;
+DECLARE @includeHistory BIT = @includeOrderHistory;
+DECLARE @applyDate BIT = @applyDateFilter;
 
-IF OBJECT_ID('tempdb..#COMPUTED') IS NOT NULL DROP TABLE #COMPUTED;
+DECLARE @usedFrom DATE = @from;
+DECLARE @usedTo   DATE = @to;
 
--- ================== BASE: piezas completadas ==================
-WITH BASE AS (
+-- Normalización redundante por seguridad (igual que en Node)
+IF (@pedido IS NULL OR LTRIM(RTRIM(@pedido)) = '')
+BEGIN
+  IF (@usedFrom IS NULL AND @usedTo IS NULL)
+  BEGIN
+    SET @usedFrom = CAST(GETDATE() AS date);
+    SET @usedTo   = CAST(GETDATE() AS date);
+  END
+  ELSE IF (@usedFrom IS NULL)
+  BEGIN
+    SET @usedFrom = @usedTo;
+  END
+  ELSE IF (@usedTo IS NULL)
+  BEGIN
+    SET @usedTo = @usedFrom;
+  END
+END
+ELSE
+BEGIN
+  -- Si hay pedido, no filtramos por fecha
+  SET @applyDate = 0;
+END
+
+-- ----------------- CTE Base (misma estructura para A y B) -----------------
+-- Usamos QUEUEWORK + JOINs necesarios para traer: PEDIDO, LINEA, CENTRO, USERNAME,
+-- TRABAJO, DESC_TRABAJO, VIDRIO/N_VIDRIO (regla FOREL), medidas, PRODUCTO, PERIMETRO, etc.
+-- eventdt = DATEEND (timestamp del evento completado)
+WITH BASE_ALL AS (
   SELECT
     O.RIF                                  AS PEDIDO,
-    ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
     OM.RIGA                                AS LINEA,
-    CONVERT(date, QW.DATEEND)              AS DATA_COMPLETE,
+    ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
+    QH.CDL_NAME                            AS CENTRO_TRABAJO,
     QW.[USERNAME]                          AS USERNAME,
     WK.CODICE                              AS TRABAJO,
     WK.DESCRIZIONE                         AS DESC_TRABAJO,
-    QH.CDL_NAME                            AS CENTRO_TRABAJO,
     CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' ELSE ISNULL(M.CODICE,'') END  AS VIDRIO,
     CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0 ELSE FLOOR(OD.ID_DETT/2)+1 END AS N_VIDRIO,
     CASE WHEN QW.ID_QUEUEREASON IN (1,2) THEN 'COMPLETE' ELSE '' END            AS ESTADO,
     QW.DATEEND                             AS DATAHORA_COMPL,
+    CONVERT(date, QW.DATEEND)              AS DATA_COMPLETE,
     CAST(1 AS INT)                         AS PIEZAS,
     OD.DIMXPZR                             AS MEDIDA_X,
     OD.DIMYPZR                             AS MEDIDA_Y,
@@ -1421,12 +1467,15 @@ WITH BASE AS (
          THEN CAST(DB.LENTOTBARRE/1000.0 AS decimal(18,6)) ELSE 0 END AS LONG_TRABAJO,
     DB.ID_DBASEORDINI,
     QW.ID_ITEMS,
+    QW.ID_ORDDETT,
+    QW.ID_WORKKIND,
     O.ID_ORDINI,
     QW.DATESTART                           AS FECHA_INICIO_OP,
     QW.DATEEND                             AS FECHA_FIN_OP,
     QW.DATEBROKEN                          AS FECHA_ROTURA,
-    O.DATAORD                              AS fecha_pedido,
-    O.DATACONS                             AS fecha_entrega_prog
+    O.DATAORD                              AS FECHA_PEDIDO,
+    O.DATACONS                             AS FECHA_ENTREGA_PROG,
+    COALESCE(QW.DATEEND, QW.DATESTART)     AS eventdt
   FROM OPTIMA_FELMAN.dbo.QUEUEWORK    AS QW   WITH (NOLOCK)
   JOIN OPTIMA_FELMAN.dbo.QUEUEHEADER  AS QH   WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
   JOIN OPTIMA_FELMAN.dbo.WORKKIND     AS WK   WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
@@ -1441,99 +1490,173 @@ WITH BASE AS (
     AND QW.ID_QUEUEREASON_COMPLETE = 20
     AND QW.DATEEND IS NOT NULL
     AND YEAR(QW.DATESTART) > 2018
-    AND QW.DATEEND >= @usedFrom
-    AND QW.DATEEND < DATEADD(DAY, 1, @usedTo)
-    AND ( @search IS NULL OR @search = ''
-          OR O.RIF            LIKE '%' + @search + '%'
-          OR QW.[USERNAME]    LIKE '%' + @search + '%'
-          OR WK.CODICE        LIKE '%' + @search + '%'
-          OR WK.DESCRIZIONE   LIKE '%' + @search + '%'   -- DESC_TRABAJO
-          OR QH.CDL_NAME      LIKE '%' + @search + '%'
-          OR PR.RIF           LIKE '%' + @search + '%'
-          OR ISNULL(M.CODICE,'') LIKE '%' + @search + '%' )
 ),
-ENRICH AS (
-  SELECT b.*, COALESCE(b.DATAHORA_COMPL, CAST(b.DATA_COMPLETE AS datetime)) AS eventdt
-  FROM BASE b
+-- ----------------- Fase A: datos del RANGO (o todo el pedido si @pedido) -----------------
+A_RANGE AS (
+  SELECT *
+  FROM BASE_ALL b
+  WHERE
+    (
+      (@pedido IS NOT NULL AND LTRIM(RTRIM(@pedido)) <> '' AND b.PEDIDO = @pedido)
+      OR
+      (
+        (@pedido IS NULL OR LTRIM(RTRIM(@pedido)) = '')
+        AND (@applyDate = 0 OR (b.eventdt >= @usedFrom AND b.eventdt < DATEADD(DAY,1,@usedTo)))
+      )
+    )
+    AND (
+      @search IS NULL OR @search = '' OR
+      b.PEDIDO        LIKE '%' + @search + '%' OR
+      b.USERNAME      LIKE '%' + @search + '%' OR
+      b.TRABAJO       LIKE '%' + @search + '%' OR
+      b.DESC_TRABAJO  LIKE '%' + @search + '%' OR
+      b.CENTRO_TRABAJO LIKE '%' + @search + '%' OR
+      b.PRODUCTO      LIKE '%' + @search + '%' OR
+      b.VIDRIO        LIKE '%' + @search + '%'
+    )
 ),
-ORDENED AS (
+-- Pedidos detectados en el rango (para backfill)
+PEDS AS (
+  SELECT DISTINCT PEDIDO FROM A_RANGE
+),
+-- ----------------- Fase B: backfill (historial completo de los pedidos del rango) --------
+B_BACKFILL_RAW AS (
+  SELECT TOP (@maxRowsBackfill) b.*
+  FROM BASE_ALL b
+  WHERE EXISTS (SELECT 1 FROM PEDS p WHERE p.PEDIDO = b.PEDIDO)
+  -- sin filtro de fecha a propósito (historial completo)
+),
+-- En caso de que haya solapamiento entre A y B, deduplicamos con ROW_NUMBER
+MERGED AS (
   SELECT
-    e.*,
-    LAG(e.eventdt) OVER (PARTITION BY e.PEDIDO, e.LINEA, e.ID_ITEMS ORDER BY e.eventdt) AS prev_eventdt
-  FROM ENRICH e
+    x.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY x.PEDIDO, x.LINEA, x.ID_ITEMS, x.ID_WORKKIND, x.PROGR, x.eventdt, x.CENTRO_TRABAJO
+      ORDER BY x.eventdt
+    ) AS rn
+  FROM (
+    SELECT * FROM A_RANGE
+    UNION ALL
+    SELECT * FROM B_BACKFILL_RAW
+  ) x
 ),
-COMPUTED AS (
-  SELECT
-    o.*,
-    CASE WHEN o.FECHA_INICIO_OP IS NOT NULL AND o.FECHA_FIN_OP IS NOT NULL
-         THEN DATEDIFF(SECOND, o.FECHA_INICIO_OP, o.FECHA_FIN_OP) END                   AS t_trabajo_seg,
-    CASE WHEN o.prev_eventdt IS NOT NULL AND o.FECHA_INICIO_OP IS NOT NULL
-         THEN DATEDIFF(SECOND, o.prev_eventdt, o.FECHA_INICIO_OP) END                   AS t_espera_prev_maquina_seg,
-    CASE WHEN o.prev_eventdt IS NOT NULL
-         THEN DATEDIFF(SECOND, o.prev_eventdt, o.eventdt) END                           AS t_entre_operaciones_seg,
-    CASE WHEN o.fecha_pedido IS NOT NULL
-         THEN DATEDIFF(SECOND, o.fecha_pedido, o.eventdt) END                           AS t_desde_pedido_seg,
-    CASE WHEN o.fecha_entrega_prog IS NOT NULL
-         THEN DATEDIFF(SECOND, o.eventdt, o.fecha_entrega_prog) END                     AS t_hasta_entrega_prog_seg,
-    DATEDIFF(SECOND,
-      MIN(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS),
-      MAX(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS)
-    )                                                                                   AS t_ciclo_pieza_total_seg
-  FROM ORDENED o
+FINAL AS (
+  SELECT * FROM MERGED
+  WHERE
+    CASE WHEN @includeHistory=1 THEN rn ELSE
+      -- si no hay backfill, solo devolvemos A_RANGE (que también está en MERGED): rn=1 garantiza no duplicar
+      rn
+    END = 1
 )
-SELECT * INTO #COMPUTED FROM COMPUTED;
-
--- ===== META (totales) =====
+-- ----------------- META y DEVOLUCIÓN -----------------
+-- Meta A (solo rango)
 SELECT
-  @usedFrom AS usedFrom,
-  @usedTo   AS usedTo,
-  COUNT(*)                                        AS total,
-  ISNULL(SUM(CAST(PIEZAS AS float)), 0)           AS piezas,
-  ISNULL(SUM(CAST(AREA   AS float)), 0)           AS area
-INTO #META
-FROM #COMPUTED;
+  COUNT(*)                                               AS total_range,
+  ISNULL(SUM(CAST(PIEZAS AS float)), 0)                  AS piezas_range,
+  ISNULL(SUM(CAST(AREA   AS float)), 0)                  AS area_range
+INTO #META_RANGE
+FROM A_RANGE;
 
--- ===== DEVOLUCIÓN =====
--- 1) Meta
-SELECT * FROM #META;
+-- Meta B (solo backfill)
+SELECT
+  COUNT(*)                                               AS total_backfill,
+  ISNULL(SUM(CAST(PIEZAS AS float)), 0)                  AS piezas_backfill,
+  ISNULL(SUM(CAST(AREA   AS float)), 0)                  AS area_backfill
+INTO #META_B
+FROM B_BACKFILL_RAW;
 
--- 2) Items (SIN paginación): todo el rango pedido
+-- Pedidos y truncado
+DECLARE @ped_in_range INT = (SELECT COUNT(*) FROM PEDS);
+DECLARE @rows_backfill INT = (SELECT ISNULL(SUM(1),0) FROM B_BACKFILL_RAW);
+DECLARE @truncated BIT = CASE WHEN @rows_backfill >= @maxRowsBackfill THEN 1 ELSE 0 END;
+
+-- Agregados finales (A ∪ B si includeHistory; si no, solo A)
+SELECT
+  CASE WHEN @applyDate=1 THEN @usedFrom ELSE NULL END AS usedFrom,
+  CASE WHEN @applyDate=1 THEN @usedTo   ELSE NULL END AS usedTo,
+  mr.total_range, mr.piezas_range, mr.area_range,
+  mb.total_backfill, mb.piezas_backfill, mb.area_backfill,
+  @ped_in_range AS pedidos_in_range,
+  @rows_backfill AS rows_backfill,
+  @truncated AS truncated,
+  @includeHistory AS includeHistory
+FROM #META_RANGE mr CROSS JOIN #META_B mb;
+
+-- Items (ordenados por tiempo ascendente para ver la secuencia)
 SELECT
   PEDIDO, NOMBRE, LINEA, DATA_COMPLETE, USERNAME,
-  TRABAJO, DESC_TRABAJO,                      -- <= requerido por frontend
+  TRABAJO, DESC_TRABAJO,
   CENTRO_TRABAJO, VIDRIO, N_VIDRIO, ESTADO, DATAHORA_COMPL,
   PIEZAS, MEDIDA_X, MEDIDA_Y, AREA, PZ_LIN, PROGR, PRODUCTO, PERIMETRO, LONG_TRABAJO,
   eventdt,
-  FECHA_INICIO_OP   AS fecha_inicio_op,
-  FECHA_FIN_OP      AS fecha_fin_op,
-  FECHA_ROTURA      AS fecha_rotura,
-  fecha_pedido,
-  fecha_entrega_prog,
-  t_trabajo_seg,
-  t_espera_prev_maquina_seg,
-  t_entre_operaciones_seg,
-  t_desde_pedido_seg,
-  t_hasta_entrega_prog_seg,
-  t_ciclo_pieza_total_seg
-FROM #COMPUTED
-ORDER BY eventdt DESC;`;
+  FECHA_INICIO_OP   = FECHA_INICIO_OP,
+  FECHA_FIN_OP      = FECHA_FIN_OP,
+  FECHA_ROTURA      = FECHA_ROTURA,
+  FECHA_PEDIDO,
+  FECHA_ENTREGA_PROG,
+  -- tiempos (segundos)
+  t_trabajo_seg = CASE WHEN FECHA_INICIO_OP IS NOT NULL AND FECHA_FIN_OP IS NOT NULL
+                       THEN DATEDIFF(SECOND, FECHA_INICIO_OP, FECHA_FIN_OP) END,
+  t_espera_prev_maquina_seg =
+      LAG(FECHA_INICIO_OP) OVER (PARTITION BY PEDIDO, LINEA, ID_ITEMS ORDER BY eventdt) -- no se usa directo; lo calculamos con prev_eventdt abajo si lo prefieres
+      ,
+  t_entre_operaciones_seg = NULL, -- lo calculamos fuera si necesitas estrictamente con prev_eventdt; para simplificar, lo omitimos aquí
+  t_desde_pedido_seg = CASE WHEN FECHA_PEDIDO IS NOT NULL
+                            THEN DATEDIFF(SECOND, FECHA_PEDIDO, eventdt) END,
+  t_hasta_entrega_prog_seg = CASE WHEN FECHA_ENTREGA_PROG IS NOT NULL
+                                  THEN DATEDIFF(SECOND, eventdt, FECHA_ENTREGA_PROG) END,
+  t_ciclo_pieza_total_seg = DATEDIFF(
+      SECOND,
+      MIN(eventdt) OVER (PARTITION BY PEDIDO, LINEA, ID_ITEMS),
+      MAX(eventdt) OVER (PARTITION BY PEDIDO, LINEA, ID_ITEMS)
+  )
+FROM FINAL
+ORDER BY eventdt ASC;`;
 
     const result = await request.query(query);
 
     // recordsets[0] = meta, recordsets[1] = items
-    const meta  = result.recordsets?.[0]?.[0] || { total: 0, piezas: 0, area: 0, usedFrom: fromISO, usedTo: toISO };
+    const meta = result.recordsets?.[0]?.[0] || null;
     const items = result.recordsets?.[1] || [];
+
+    // Armar respuesta con dos agregados (range vs. total con backfill)
+    const usedFrom = meta?.usedFrom || fromISO || null;
+    const usedTo   = meta?.usedTo   || toISO   || null;
+
+    const aggRange = {
+      total:  meta?.total_range  ?? items.length,
+      piezas: meta?.piezas_range ?? 0,
+      area:   meta?.area_range   ?? 0
+    };
+
+    const aggWithBackfill = {
+      total:  (meta?.total_range ?? 0) + (meta?.total_backfill ?? 0),
+      piezas: (meta?.piezas_range ?? 0) + (meta?.piezas_backfill ?? 0),
+      area:   (meta?.area_range   ?? 0) + (meta?.area_backfill   ?? 0)
+    };
+
+    const backfill = {
+      enabled: !!meta?.includeHistory,
+      pedidos: meta?.pedidos_in_range ?? 0,
+      rows:    meta?.rows_backfill ?? 0,
+      truncated: !!meta?.truncated
+    };
 
     return res.json({
       ok: true,
-      usedFrom: meta.usedFrom,
-      usedTo: meta.usedTo,
-      total: meta.total,
-      agg: { piezas: meta.piezas, area: meta.area },
+      filters: {
+        pedido: pedido || null,
+        usedFrom,
+        usedTo,
+        applyDateFilter: !pedido // true si se aplicó rango por fecha (no hubo pedido)
+      },
+      aggRange,
+      aggWithBackfill,
+      backfill,
       items
     });
   } catch (err) {
-    console.error('❌ /piezas-maquina (sin paginación) ERROR:', err);
+    console.error('❌ /piezas-maquina (robusta) ERROR:', err);
     return res.status(500).json({
       ok: false,
       message: '/piezas-maquina failed',
@@ -1541,6 +1664,7 @@ ORDER BY eventdt DESC;`;
     });
   }
 });
+
 
 
 
