@@ -1354,37 +1354,28 @@ router.get('/qw/lookups', async (req, res) => {
 
 // /control-optima/piezas-maquina  (robusta: fechas opcionales + backfill por pedido + sin paginación)
 // === /control-optima/piezas-maquina (robusta, sin paginación) =================
+// === /control-optima/piezas-maquina (robusta, sin paginación) =================
 router.get('/piezas-maquina', async (req, res) => {
   const pool = await poolPromise;
 
   try {
-    // ------------------ 1) Parámetros de entrada ------------------
+    // 1) Parámetros de entrada
     const {
       from: fromStr,
       to: toStr,
       search: searchStr,
     } = req.query || {};
 
-    // Si no vienen fechas, usar hoy (zona servidor). Se envían como params a SQL.
     const today = new Date();
-    const startOfDay = (d) => {
-      const x = new Date(d);
-      x.setHours(0, 0, 0, 0);
-      return x;
-    };
-    const endOfDay = (d) => {
-      const x = new Date(d);
-      x.setHours(23, 59, 59, 999);
-      return x;
-    };
+    const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+    const endOfDay   = (d) => { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; };
 
     const from = fromStr ? new Date(fromStr) : startOfDay(today);
-    const to = toStr ? new Date(toStr) : endOfDay(today);
+    const to   = toStr   ? new Date(toStr)   : endOfDay(today);
     const q = (searchStr || '').trim();
 
-    // ------------------ 2) SQL principal (CTEs encadenadas) ------------------
-    // NOTA: Nada de USE, ni DECLARE duplicados. Todos los SELECT terminan sin comas colgantes.
-    const sql = `
+    // 2) SQL principal (CTEs encadenadas) — OJO: usar nombre distinto a 'sql'
+    const query = `
 SET NOCOUNT ON;
 
 ;WITH BASE_RANGO AS (
@@ -1441,7 +1432,6 @@ PEDIDOS_EN_RANGO AS (
   SELECT DISTINCT PEDIDO FROM BASE_RANGO
 ),
 BASE_TODAS AS (
-  -- Mismas uniones, SIN filtro de fecha, pero solo para los pedidos detectados en rango
   SELECT
     O.RIF                                AS PEDIDO,
     OM.RIGA                               AS LINEA,
@@ -1515,7 +1505,6 @@ SELECT
   PRODUCTO,
   CLIENTE,
   fuera_de_rango,
-  -- Tiempos calculados
   CASE WHEN FECHA_INICIO_OP IS NOT NULL AND FECHA_FIN_OP IS NOT NULL
        THEN DATEDIFF(SECOND, FECHA_INICIO_OP, FECHA_FIN_OP) END                                     AS t_trabajo_seg,
   CASE WHEN prev_eventdt IS NOT NULL AND FECHA_INICIO_OP IS NOT NULL
@@ -1535,23 +1524,18 @@ FROM ORDEN
 ORDER BY PEDIDO, LINEA, eventdt;
 `;
 
-    // ------------------ 3) Ejecución ------------------
+    // 3) Ejecución
     const request = pool.request();
     request.input('from', sql.DateTime2, from);
     request.input('to',   sql.DateTime2, to);
-    // Para búsqueda, usar comodín ya listo (si hay texto); si no, cadena vacía
     request.input('q',    sql.NVarChar(120), q ? `%${q}%` : '');
 
-    const result = await request.query(sql);
+    const result = await request.query(query);
 
-    // ------------------ 4) Respuesta ------------------
+    // 4) Respuesta
     return res.json({
       ok: true,
-      params: {
-        from,
-        to,
-        search: q,
-      },
+      params: { from, to, search: q },
       meta: {
         total: result?.recordset?.length || 0,
         notas: [
