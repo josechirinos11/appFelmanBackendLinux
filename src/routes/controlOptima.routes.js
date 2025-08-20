@@ -1389,6 +1389,7 @@ DECLARE @useDateFilter bit = CASE WHEN @usedFrom IS NULL OR @usedTo IS NULL THEN
 
 IF OBJECT_ID('tempdb..#COMPUTED') IS NOT NULL DROP TABLE #COMPUTED;
 
+
 -- ================== BASE: piezas completadas ==================
 WITH BASE AS (
 SELECT
@@ -1534,6 +1535,346 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
 
 
 
+// === NUEVO: AGRUPADO POR PEDIDO (summary) ====================================
+// GET /control-optima/piezas-maquina/summary?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=50&search=TXT
+router.get('/piezas-maquina/summary', async (req, res) => {
+  const pool = await poolPromise;
+
+  const {
+    from: fromStr,
+    to: toStr,
+    search: searchStr,
+    page = 1,
+    pageSize = 50,
+  } = req.query || {};
+
+  const from = fromStr ? new Date(fromStr) : null;
+  const to   = toStr   ? new Date(toStr)   : null;
+  const search = (searchStr || '').trim();
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const pageSz  = Math.max(1, Math.min(500, parseInt(pageSize, 10) || 50));
+  const offset  = (pageNum - 1) * pageSz;
+
+  try {
+    const request = pool.request()
+      .input('from',     sql.DateTime, from || null)
+      .input('to',       sql.DateTime, to   || null)
+      .input('search',   sql.NVarChar(100), search || null)
+      .input('offset',   sql.Int, offset)
+      .input('pageSize', sql.Int, pageSz);
+
+    // Nota: usamos la misma base que tu endpoint /piezas-maquina,
+    // pero terminamos con un GROUP BY por pedido y calculamos totales/medias.
+    const query = `
+SET NOCOUNT ON;
+
+DECLARE @usedFrom DATE = @from;
+DECLARE @usedTo   DATE = @to;
+DECLARE @useDateFilter bit = CASE WHEN @usedFrom IS NULL OR @usedTo IS NULL THEN 0 ELSE 1 END;
+
+WITH BASE AS (
+  SELECT
+    O.RIF                                  AS PEDIDO,
+    ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
+    OM.RIGA                                AS LINEA,
+    QW.[USERNAME]                          AS USERNAME,
+    WK.CODICE                              AS TRABAJO,
+    WK.DESCRIZIONE                         AS DESC_TRABAJO,
+    QH.CDL_NAME                            AS CENTRO_TRABAJO,
+    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' ELSE ISNULL(M.CODICE,'') END  AS VIDRIO,
+    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0 ELSE FLOOR(OD.ID_DETT/2)+1 END AS N_VIDRIO,
+    CASE WHEN QW.ID_QUEUEREASON IN (1,2) THEN 'COMPLETE' ELSE '' END            AS ESTADO,
+    QW.DATEEND                             AS DATAHORA_COMPL,
+    CAST(1 AS INT)                         AS PIEZAS,
+    OD.DIMXPZR                             AS MEDIDA_X,
+    OD.DIMYPZR                             AS MEDIDA_Y,
+    CAST(OD.DIMXPZR*OD.DIMYPZR/1000000.0 AS decimal(18,6)) AS AREA,
+    OM.QTAPZ                               AS PZ_LIN,
+    QW.PROGR                               AS PROGR,
+    PR.RIF                                 AS PRODUCTO,
+    DB.ID_DBASEORDINI,
+    QW.ID_ITEMS,
+    O.ID_ORDINI,
+    QW.DATESTART                           AS FECHA_INICIO_OP,
+    QW.DATEEND                             AS FECHA_FIN_OP,
+    O.DATAORD                              AS FECHA_PEDIDO,
+    O.DATACONS                             AS FECHA_ENTREGA_PROG
+  FROM OPTIMA_FELMAN.dbo.QUEUEWORK    AS QW   WITH (NOLOCK)
+  JOIN OPTIMA_FELMAN.dbo.QUEUEHEADER  AS QH   WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+  JOIN OPTIMA_FELMAN.dbo.WORKKIND     AS WK   WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+  JOIN OPTIMA_FELMAN.dbo.ORDMAST      AS OM   WITH (NOLOCK) ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+  JOIN OPTIMA_FELMAN.dbo.ORDINI       AS O    WITH (NOLOCK) ON O.ID_ORDINI       = OM.ID_ORDINI
+  JOIN OPTIMA_FELMAN.dbo.ORDDETT      AS OD   WITH (NOLOCK) ON OD.ID_ORDDETT     = QW.ID_ORDDETT
+  LEFT JOIN OPTIMA_FELMAN.dbo.MAGAZ   AS M    WITH (NOLOCK) ON M.ID_MAGAZ        = OD.ID_MAGAZ
+  LEFT JOIN OPTIMA_FELMAN.dbo.ITEMS   AS IT   WITH (NOLOCK) ON IT.ID_ITEMS       = QW.ID_ITEMS
+  LEFT JOIN OPTIMA_FELMAN.dbo.DBASEORDINI AS DB WITH (NOLOCK) ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
+  LEFT JOIN OPTIMA_FELMAN.dbo.PRODOTTI    AS PR WITH (NOLOCK) ON PR.ID_PRODOTTI  = OM.ID_PRODOTTI
+  WHERE QW.ID_QUEUEREASON IN (1,2)
+    AND QW.ID_QUEUEREASON_COMPLETE = 20
+    AND QW.DATEEND IS NOT NULL
+    AND YEAR(QW.DATESTART) > 2018
+    AND ( @useDateFilter = 0
+          OR QW.DATEEND >= @usedFrom AND QW.DATEEND < DATEADD(DAY, 1, @usedTo) )
+    AND ( @search IS NULL OR @search = ''
+          OR O.RIF           LIKE '%' + @search + '%'
+          OR QW.[USERNAME]   LIKE '%' + @search + '%'
+          OR WK.CODICE       LIKE '%' + @search + '%'
+          OR QH.CDL_NAME     LIKE '%' + @search + '%'
+          OR PR.RIF          LIKE '%' + @search + '%'
+          OR ISNULL(M.CODICE,'') LIKE '%' + @search + '%' )
+),
+E AS (
+  SELECT
+    b.*,
+    COALESCE(b.DATAHORA_COMPL, CAST(CONVERT(date, b.DATAHORA_COMPL) AS datetime)) AS eventdt
+  FROM BASE b
+),
+O AS (
+  SELECT
+    e.*,
+    LAG(e.eventdt) OVER (PARTITION BY e.PEDIDO, e.LINEA, e.ID_ITEMS ORDER BY e.eventdt) AS prev_eventdt
+  FROM E e
+),
+T AS (
+  SELECT
+    o.*,
+    CASE WHEN o.FECHA_INICIO_OP IS NOT NULL AND o.FECHA_FIN_OP IS NOT NULL
+         THEN DATEDIFF(SECOND, o.FECHA_INICIO_OP, o.FECHA_FIN_OP) END                           AS t_trabajo_seg,
+    CASE WHEN o.prev_eventdt IS NOT NULL
+         THEN DATEDIFF(SECOND, o.prev_eventdt, o.eventdt) END                                   AS t_entre_operaciones_seg,
+    CASE WHEN o.prev_eventdt IS NOT NULL AND o.FECHA_INICIO_OP IS NOT NULL
+         THEN DATEDIFF(SECOND, o.prev_eventdt, o.FECHA_INICIO_OP) END                           AS t_espera_prev_maquina_seg,
+    CASE WHEN o.FECHA_PEDIDO IS NOT NULL
+         THEN DATEDIFF(SECOND, o.FECHA_PEDIDO, o.eventdt) END                                   AS t_desde_pedido_seg,
+    CASE WHEN o.FECHA_ENTREGA_PROG IS NOT NULL
+         THEN DATEDIFF(SECOND, o.eventdt, o.FECHA_ENTREGA_PROG) END                             AS t_hasta_entrega_prog_seg,
+    MIN(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS)                            AS min_ev,
+    MAX(o.eventdt) OVER (PARTITION BY o.PEDIDO, o.LINEA, o.ID_ITEMS)                            AS max_ev
+  FROM O o
+),
+T2 AS (
+  SELECT
+    *,
+    DATEDIFF(SECOND, min_ev, max_ev) AS t_ciclo_pieza_total_seg
+  FROM T
+),
+G AS (
+  -- normalizamos clave de pedido para evitar duplicados por espacios/minúsculas
+  SELECT
+    UPPER(LTRIM(RTRIM(PEDIDO))) AS PedidoKey,
+    MAX(PEDIDO)                 AS PEDIDO,
+    MAX(NOMBRE)                 AS NOMBRE,
+    -- estado: único / mixto
+    CASE
+      WHEN COUNT(DISTINCT ISNULL(ESTADO,'')) <= 1 THEN MAX(ESTADO)
+      ELSE 'Mixto'
+    END                         AS ESTADO,
+    MAX(eventdt)                AS fechaUlt,
+    COUNT(*)                    AS countRows,
+    SUM(COALESCE(t_trabajo_seg,0))               AS s_trabajo,
+    SUM(COALESCE(t_espera_prev_maquina_seg,0))   AS s_esperaprev,
+    SUM(COALESCE(t_entre_operaciones_seg,0))     AS s_entreops,
+    SUM(COALESCE(t_desde_pedido_seg,0))          AS s_desdeped,
+    SUM(COALESCE(t_hasta_entrega_prog_seg,0))    AS s_hastaent,
+    SUM(COALESCE(t_ciclo_pieza_total_seg,0))     AS s_ciclo
+  FROM T2
+  GROUP BY UPPER(LTRIM(RTRIM(PEDIDO)))
+),
+META AS (
+  SELECT COUNT(*) AS total FROM G
+),
+PAGE AS (
+  SELECT *
+  FROM G
+  ORDER BY fechaUlt DESC
+  OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+)
+SELECT * FROM META;
+SELECT
+  PedidoKey,
+  PEDIDO      AS pedido,
+  NOMBRE      AS nombre,
+  countRows   AS [count],
+  ESTADO      AS estado,
+  CONVERT(datetime, fechaUlt) AS fechaUlt,
+  -- empaquetamos los totales/medias para que el front no agrupe nada más
+  s_trabajo     AS total_trabajo,
+  s_esperaprev  AS total_esperaPrev,
+  s_entreops    AS total_entreOps,
+  s_desdeped    AS total_desdePedido,
+  s_hastaent    AS total_hastaEntrega,
+  s_ciclo       AS total_ciclo,
+  CASE WHEN countRows>0 THEN s_trabajo    * 1.0 / countRows ELSE 0 END AS avg_trabajo,
+  CASE WHEN countRows>0 THEN s_esperaprev * 1.0 / countRows ELSE 0 END AS avg_esperaPrev,
+  CASE WHEN countRows>0 THEN s_entreops   * 1.0 / countRows ELSE 0 END AS avg_entreOps,
+  CASE WHEN countRows>0 THEN s_desdeped   * 1.0 / countRows ELSE 0 END AS avg_desdePedido,
+  CASE WHEN countRows>0 THEN s_hastaent   * 1.0 / countRows ELSE 0 END AS avg_hastaEntrega,
+  CASE WHEN countRows>0 THEN s_ciclo      * 1.0 / countRows ELSE 0 END AS avg_ciclo
+FROM PAGE
+ORDER BY fechaUlt DESC;
+    `;
+
+    const r = await request.query(query);
+    const meta  = r.recordsets?.[0]?.[0] || { total: 0 };
+    const items = r.recordsets?.[1] || [];
+
+    // adaptamos el shape al front
+    const groups = items.map(it => ({
+      kind: 'pedido',
+      pedido: it.pedido,
+      nombre: it.nombre,
+      count: it.count,
+      estado: it.estado || '',
+      fechaUlt: it.fechaUlt ? new Date(it.fechaUlt).toISOString() : null,
+      rows: [], // se cargan al abrir modal
+      totals: {
+        trabajo:      Number(it.total_trabajo)    || 0,
+        esperaPrev:   Number(it.total_esperaPrev) || 0,
+        entreOps:     Number(it.total_entreOps)   || 0,
+        desdePedido:  Number(it.total_desdePedido)|| 0,
+        hastaEntrega: Number(it.total_hastaEntrega)|| 0,
+        cicloPieza:   Number(it.total_ciclo)      || 0,
+      },
+      avg: {
+        trabajo:      Number(it.avg_trabajo)      || 0,
+        esperaPrev:   Number(it.avg_esperaPrev)   || 0,
+        entreOps:     Number(it.avg_entreOps)     || 0,
+        desdePedido:  Number(it.avg_desdePedido)  || 0,
+        hastaEntrega: Number(it.avg_hastaEntrega) || 0,
+        cicloPieza:   Number(it.avg_ciclo)        || 0,
+      }
+    }));
+
+    return res.json({
+      items: groups,
+      page: pageNum,
+      pageSize: pageSz,
+      total: meta.total,
+      from: fromStr || null,
+      to: toStr || null,
+      orderBy: 'fechaUlt', orderDir: 'DESC'
+    });
+  } catch (err) {
+    console.error('/piezas-maquina/summary', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+
+// === NUEVO: DETALLE DE UN PEDIDO (todas las filas del rango) ==================
+// GET /control-optima/piezas-maquina/pedido?pedido=01/011254-10&from=YYYY-MM-DD&to=YYYY-MM-DD
+router.get('/piezas-maquina/pedido', async (req, res) => {
+  const pool = await poolPromise;
+  const { pedido, from: fromStr, to: toStr } = req.query || {};
+
+  if (!pedido) return res.status(400).json({ message: 'Parámetro "pedido" requerido.' });
+
+  const from = fromStr ? new Date(fromStr) : null;
+  const to   = toStr   ? new Date(toStr)   : null;
+
+  try {
+    const request = pool.request()
+      .input('pedido',  sql.NVarChar(50), String(pedido))
+      .input('from',    sql.DateTime, from || null)
+      .input('to',      sql.DateTime, to   || null);
+
+    const query = `
+SET NOCOUNT ON;
+
+DECLARE @usedFrom DATE = @from;
+DECLARE @usedTo   DATE = @to;
+DECLARE @useDateFilter bit = CASE WHEN @usedFrom IS NULL OR @usedTo IS NULL THEN 0 ELSE 1 END;
+
+WITH BASE AS (
+  SELECT
+    O.RIF                                  AS PEDIDO,
+    ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
+    OM.RIGA                                AS LINEA,
+    CONVERT(date, QW.DATEEND)              AS DATA_COMPLETE,
+    QW.[USERNAME]                          AS USERNAME,
+    WK.CODICE                              AS TRABAJO,
+    WK.DESCRIZIONE                         AS DESC_TRABAJO,
+    QH.CDL_NAME                            AS CENTRO_TRABAJO,
+    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' ELSE ISNULL(M.CODICE,'') END  AS VIDRIO,
+    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0 ELSE FLOOR(OD.ID_DETT/2)+1 END AS N_VIDRIO,
+    CASE WHEN QW.ID_QUEUEREASON IN (1,2) THEN 'COMPLETE' ELSE '' END            AS ESTADO,
+    QW.DATEEND                             AS DATAHORA_COMPL,
+    CAST(1 AS INT)                         AS PIEZAS,
+    OD.DIMXPZR                             AS MEDIDA_X,
+    OD.DIMYPZR                             AS MEDIDA_Y,
+    CAST(OD.DIMXPZR*OD.DIMYPZR/1000000.0 AS decimal(18,6)) AS AREA,
+    OM.QTAPZ                               AS PZ_LIN,
+    QW.PROGR                               AS PROGR,
+    PR.RIF                                 AS PRODUCTO,
+    DB.ID_DBASEORDINI,
+    QW.ID_ITEMS,
+    O.ID_ORDINI,
+    QW.DATESTART                           AS fecha_inicio_op,
+    QW.DATEEND                             AS fecha_fin_op,
+    O.DATAORD                              AS fecha_pedido,
+    O.DATACONS                             AS fecha_entrega_prog
+  FROM OPTIMA_FELMAN.dbo.QUEUEWORK    AS QW   WITH (NOLOCK)
+  JOIN OPTIMA_FELMAN.dbo.QUEUEHEADER  AS QH   WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+  JOIN OPTIMA_FELMAN.dbo.WORKKIND     AS WK   WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+  JOIN OPTIMA_FELMAN.dbo.ORDMAST      AS OM   WITH (NOLOCK) ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+  JOIN OPTIMA_FELMAN.dbo.ORDINI       AS O    WITH (NOLOCK) ON O.ID_ORDINI       = OM.ID_ORDINI
+  JOIN OPTIMA_FELMAN.dbo.ORDDETT      AS OD   WITH (NOLOCK) ON OD.ID_ORDDETT     = QW.ID_ORDDETT
+  LEFT JOIN OPTIMA_FELMAN.dbo.MAGAZ   AS M    WITH (NOLOCK) ON M.ID_MAGAZ        = OD.ID_MAGAZ
+  LEFT JOIN OPTIMA_FELMAN.dbo.ITEMS   AS IT   WITH (NOLOCK) ON IT.ID_ITEMS       = QW.ID_ITEMS
+  LEFT JOIN OPTIMA_FELMAN.dbo.DBASEORDINI AS DB WITH (NOLOCK) ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
+  LEFT JOIN OPTIMA_FELMAN.dbo.PRODOTTI    AS PR WITH (NOLOCK) ON PR.ID_PRODOTTI  = OM.ID_PRODOTTI
+  WHERE QW.ID_QUEUEREASON IN (1,2)
+    AND QW.ID_QUEUEREASON_COMPLETE = 20
+    AND QW.DATEEND IS NOT NULL
+    AND YEAR(QW.DATESTART) > 2018
+    AND O.RIF = @pedido
+    AND ( @useDateFilter = 0
+          OR QW.DATEEND >= @usedFrom AND QW.DATEEND < DATEADD(DAY, 1, @usedTo) )
+),
+E AS (
+  SELECT *, COALESCE(DATAHORA_COMPL, CAST(DATA_COMPLETE AS datetime)) AS eventdt
+  FROM BASE
+),
+O AS (
+  SELECT
+    e.*,
+    LAG(e.eventdt) OVER (PARTITION BY e.PEDIDO, e.LINEA, e.ID_ITEMS ORDER BY e.eventdt) AS prev_eventdt
+  FROM E e
+)
+SELECT
+  PEDIDO, NOMBRE, LINEA, DATA_COMPLETE, USERNAME, TRABAJO, DESC_TRABAJO, CENTRO_TRABAJO,
+  VIDRIO, N_VIDRIO, 'COMPLETE' AS ESTADO, DATAHORA_COMPL,
+  PIEZAS, MEDIDA_X, MEDIDA_Y, PZ_LIN, PROGR, PRODUCTO,
+  ID_DBASEORDINI, ID_ITEMS, ID_ORDINI,
+  fecha_inicio_op, fecha_fin_op,
+  fecha_pedido, fecha_entrega_prog,
+  eventdt,
+  CASE WHEN fecha_inicio_op IS NOT NULL AND fecha_fin_op IS NOT NULL
+       THEN DATEDIFF(SECOND, fecha_inicio_op, fecha_fin_op) END AS t_trabajo_seg,
+  CASE WHEN prev_eventdt IS NOT NULL
+       THEN DATEDIFF(SECOND, prev_eventdt, eventdt) END AS t_entre_operaciones_seg,
+  CASE WHEN prev_eventdt IS NOT NULL AND fecha_inicio_op IS NOT NULL
+       THEN DATEDIFF(SECOND, prev_eventdt, fecha_inicio_op) END AS t_espera_prev_maquina_seg,
+  CASE WHEN fecha_pedido IS NOT NULL
+       THEN DATEDIFF(SECOND, fecha_pedido, eventdt) END AS t_desde_pedido_seg,
+  CASE WHEN fecha_entrega_prog IS NOT NULL
+       THEN DATEDIFF(SECOND, eventdt, fecha_entrega_prog) END AS t_hasta_entrega_prog_seg,
+  DATEDIFF(
+    SECOND,
+    MIN(eventdt) OVER (PARTITION BY PEDIDO, LINEA, ID_ITEMS),
+    MAX(eventdt) OVER (PARTITION BY PEDIDO, LINEA, ID_ITEMS)
+  ) AS t_ciclo_pieza_total_seg
+FROM O
+ORDER BY eventdt;`;
+
+    const r = await request.query(query);
+    return res.json({ items: r.recordset || [] });
+
+  } catch (err) {
+    console.error('/piezas-maquina/pedido', err);
+    return res.status(500).json({ message: err.message });
+  }
+});
 
 
 
