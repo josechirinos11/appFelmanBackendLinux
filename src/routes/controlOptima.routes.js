@@ -1352,13 +1352,12 @@ router.get('/qw/lookups', async (req, res) => {
 // GET /piezas-maquina-2025
 // routes/piezasMaquina2025.js
 
-
 // POST /control-optima/piezas-maquina
 router.post("/piezas-maquina", async (req, res) => {
   const { desde, hasta } = req.body;
 
   if (!desde || !hasta) {
-    return res.status(400).json({ error: "Debe indicar 'desde' y 'hasta'" });
+    return res.status(400).json({ error: "Debe indicar 'desde' y 'hasta' (YYYY-MM-DD)" });
   }
 
   try {
@@ -1367,47 +1366,54 @@ router.post("/piezas-maquina", async (req, res) => {
       password: process.env.DB_PASS_OPTIMA,
       server: process.env.DB_HOST_OPTIMA,
       port: parseInt(process.env.DB_PORT_OPTIMA, 10),
-      database: process.env.DB_NAME_OPTIMA,
+      database: process.env.DB_NAME_OPTIMA, // puede ser Felman_2024; abajo forzamos OPTIMA_FELMAN en FROM
       options: { encrypt: false }
     });
 
     const query = `
       SET NOCOUNT ON;
 
+      DECLARE @d DATETIME = @desde, @h DATETIME = DATEADD(DAY, 1, @hasta);
+
+      /* 1) Base cruda con todas las columnas necesarias */
       WITH BASE AS (
         SELECT
           QW.ID_QUEUEWORK, QW.ID_WORKKIND,
-          WK.CODICE                AS trabajo,
-          WK.DESCRIZIONE           AS desc_trabajo,
-          QH.CDL_NAME              AS centro_trabajo,
-          QW.[USERNAME]            AS username,
-          QW.DATESTART             AS fecha_inicio_op,
-          QW.DATEEND               AS fecha_fin_op,
-          QW.DATEBROKEN            AS fecha_rotura,
+          WK.CODICE                      AS trabajo,
+          WK.DESCRIZIONE                 AS desc_trabajo,
+          QH.CDL_NAME                    AS centro_trabajo,
+          QW.[USERNAME]                  AS username,
+          QW.DATESTART                   AS fecha_inicio_op,
+          QW.DATEEND                     AS fecha_fin_op,
+          QW.DATEBROKEN                  AS fecha_rotura,
           QW.ID_QUEUEREASON,
           QW.ID_QUEUEREASON_COMPLETE,
           QW.ID_QUEUEREASON_BREAK,
-          OM.RIGA                  AS linea,
-          OI.RIF                   AS pedido,
-          ISNULL(OI.descr1_sped,'') AS nombre,
-          OI.DATAORD               AS fecha_pedido,
-          OI.DATACONS              AS fecha_entrega_prog,
+          OM.RIGA                        AS linea,
+          OI.RIF                         AS pedido,
+          ISNULL(OI.descr1_sped,'')      AS nombre,
+          OI.DATAORD                     AS fecha_pedido,
+          OI.DATACONS                    AS fecha_entrega_prog,
           COALESCE(QW.DATEEND, QW.DATESTART, QW.DATEBROKEN) AS eventdt,
           QW.ID_ITEMS, QW.ID_ORDDETT, QW.PROGR
-        FROM dbo.QUEUEWORK     AS QW
-        JOIN dbo.QUEUEHEADER   AS QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-        JOIN dbo.WORKKIND      AS WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-        JOIN dbo.ORDMAST       AS OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-        JOIN dbo.ORDINI        AS OI ON OI.ID_ORDINI      = OM.ID_ORDINI
-        WHERE QW.ID_QUEUEREASON IN (1,2)
-          AND QW.ID_QUEUEREASON_COMPLETE = 20
+        FROM OPTIMA_FELMAN.dbo.QUEUEWORK     AS QW
+        JOIN OPTIMA_FELMAN.dbo.QUEUEHEADER   AS QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+        JOIN OPTIMA_FELMAN.dbo.WORKKIND      AS WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+        JOIN OPTIMA_FELMAN.dbo.ORDMAST       AS OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+        JOIN OPTIMA_FELMAN.dbo.ORDINI        AS OI ON OI.ID_ORDINI      = OM.ID_ORDINI
+        WHERE QW.ID_QUEUEREASON IN (1,2)         -- operaciones reales
+          AND QW.ID_QUEUEREASON_COMPLETE = 20    -- completadas
       ),
+
+      /* 2) Pedidos con al menos un evento en el rango (>= desde, < hasta+1 día) */
       PEDIDOS_EN_RANGO AS (
         SELECT DISTINCT b.pedido
         FROM BASE b
-        WHERE b.eventdt >= @desde
-          AND b.eventdt <  DATEADD(DAY,1,@hasta)
+        WHERE b.eventdt >= @d
+          AND b.eventdt <  @h
       ),
+
+      /* 3) Orden con referencia al evento previo dentro de pedido/linea/pieza */
       ORDEN AS (
         SELECT
           b.*,
@@ -1418,6 +1424,8 @@ router.post("/piezas-maquina", async (req, res) => {
         FROM BASE b
         WHERE b.pedido IN (SELECT pedido FROM PEDIDOS_EN_RANGO)
       )
+
+      /* 4) Salida final */
       SELECT
         pedido                           AS PEDIDO,
         nombre                           AS NOMBRE,
@@ -1431,33 +1439,41 @@ router.post("/piezas-maquina", async (req, res) => {
         CONVERT(date, fecha_fin_op)      AS DATA_COMPLETE,
         username                         AS USERNAME,
         centro_trabajo                   AS CENTRO_TRABAJO,
+
         eventdt,
         fecha_inicio_op,
         fecha_fin_op,
         fecha_rotura,
         fecha_pedido,
         fecha_entrega_prog,
+
         t_trabajo_seg =
           CASE WHEN fecha_inicio_op IS NOT NULL AND fecha_fin_op IS NOT NULL
                THEN DATEDIFF(SECOND, fecha_inicio_op, fecha_fin_op) END,
+
         t_entre_operaciones_seg =
           CASE WHEN prev_eventdt IS NOT NULL
                THEN DATEDIFF(SECOND, prev_eventdt, eventdt) END,
+
         t_espera_prev_maquina_seg =
           CASE WHEN prev_eventdt IS NOT NULL AND fecha_inicio_op IS NOT NULL
                THEN DATEDIFF(SECOND, prev_eventdt, fecha_inicio_op) END,
+
         t_desde_pedido_seg =
           CASE WHEN fecha_pedido IS NOT NULL
                THEN DATEDIFF(SECOND, fecha_pedido, eventdt) END,
+
         t_hasta_entrega_prog_seg =
           CASE WHEN fecha_entrega_prog IS NOT NULL
                THEN DATEDIFF(SECOND, eventdt, fecha_entrega_prog) END,
+
         t_ciclo_pieza_total_seg =
           DATEDIFF(
             SECOND,
             MIN(eventdt) OVER (PARTITION BY pedido, linea, ID_ITEMS),
             MAX(eventdt) OVER (PARTITION BY pedido, linea, ID_ITEMS)
           ),
+
         linea, ID_ITEMS, ID_ORDDETT, PROGR,
         trabajo, desc_trabajo
       FROM ORDEN
@@ -1465,14 +1481,158 @@ router.post("/piezas-maquina", async (req, res) => {
     `;
 
     const result = await pool.request()
-      .input("desde", sql.DateTime, desde)
-      .input("hasta", sql.DateTime, hasta)
+      .input("desde", sql.DateTime, new Date(`${desde}T00:00:00`))
+      .input("hasta", sql.DateTime, new Date(`${hasta}T00:00:00`))
       .query(query);
 
-    res.json(result.recordset);
+    return res.json(result.recordset ?? []);
   } catch (err) {
     console.error("Error en /piezas-maquina:", err);
-    res.status(500).json({ error: "Error interno en el servidor" });
+    return res.status(500).json({ error: "Error interno en el servidor" });
+  }
+});
+
+router.get('/piezas-maquina2', async (req, res) => {
+  const { fechaDesde, fechaHasta } = req.query;
+
+  // Validar parámetros
+  if (!fechaDesde || !fechaHasta) {
+    return res.status(400).json({ error: 'Se requieren los parámetros fechaDesde y fechaHasta' });
+  }
+
+  // Validar formato de fechas
+  const fechaDesdeValida = Date.parse(fechaDesde);
+  const fechaHastaValida = Date.parse(fechaHasta);
+  if (isNaN(fechaDesdeValida) || isNaN(fechaHastaValida)) {
+    return res.status(400).json({ error: 'Formato de fecha inválido. Use formato ISO (YYYY-MM-DD)' });
+  }
+
+  try {
+    // Obtener la conexión del pool
+    const pool = await poolPromise;
+
+    // Crear una solicitud
+    const request = pool.request();
+    request.input('fechaDesde', sql.DateTime, new Date(fechaDesde));
+    request.input('fechaHasta', sql.DateTime, new Date(fechaHasta));
+
+    // Consulta SQL
+    const query = `
+      SET NOCOUNT ON;
+
+      -- 1) Base cruda con todas las columnas necesarias
+      WITH BASE AS (
+        SELECT
+          QW.ID_QUEUEWORK, QW.ID_WORKKIND,
+          WK.CODICE AS trabajo,
+          WK.DESCRIZIONE AS desc_trabajo,
+          QH.CDL_NAME AS centro_trabajo,
+          QW.[USERNAME] AS username,
+          QW.DATESTART AS fecha_inicio_op,
+          QW.DATEEND AS fecha_fin_op,
+          QW.DATEBROKEN AS fecha_rotura,
+          QW.ID_QUEUEREASON,
+          QW.ID_QUEUEREASON_COMPLETE,
+          QW.ID_QUEUEREASON_BREAK,
+          OM.RIGA AS linea,
+          OI.RIF AS pedido,
+          ISNULL(OI.descr1_sped, '') AS nombre, -- cliente
+          OI.DATAORD AS fecha_pedido,
+          OI.DATACONS AS fecha_entrega_prog,
+          -- instante del evento para filtrar/ordenar
+          COALESCE(QW.DATEEND, QW.DATESTART, QW.DATEBROKEN) AS eventdt,
+          QW.ID_ITEMS, QW.ID_ORDDETT, QW.PROGR
+        FROM dbo.QUEUEWORK AS QW
+        JOIN dbo.QUEUEHEADER AS QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+        JOIN dbo.WORKKIND AS WK ON WK.ID_WORKKIND = QW.ID_WORKKIND
+        JOIN dbo.ORDMAST AS OM ON OM.ID_ORDMAST = QW.ID_ORDMAST
+        JOIN dbo.ORDINI AS OI ON OI.ID_ORDINI = OM.ID_ORDINI
+        WHERE QW.ID_QUEUEREASON IN (1, 2) -- sólo operaciones reales (como en las views)
+          AND QW.ID_QUEUEREASON_COMPLETE = 20 -- completadas
+      ),
+
+      -- 2) Pedidos con al menos un evento en el rango (lógica inclusiva/exclusiva)
+      PEDIDOS_EN_RANGO AS (
+        SELECT DISTINCT b.pedido
+        FROM BASE b
+        WHERE b.eventdt >= @fechaDesde
+          AND b.eventdt < @fechaHasta
+      ),
+
+      -- 3) Orden + referencia al evento previo (por pedido/linea/pieza)
+      ORDEN AS (
+        SELECT
+          b.*,
+          LAG(b.eventdt) OVER (
+            PARTITION BY b.pedido, b.linea, b.ID_ITEMS
+            ORDER BY b.eventdt
+          ) AS prev_eventdt
+        FROM BASE b
+        WHERE b.pedido IN (SELECT pedido FROM PEDIDOS_EN_RANGO)
+      )
+
+      -- 4) Salida final: columnas para los tipos del frontend
+      SELECT
+        -- claves/etiquetas base
+        pedido AS PEDIDO,
+        nombre AS NOMBRE,
+        -- estado lógico del evento (compatible con tus tipos)
+        ESTADO =
+          CASE
+            WHEN ID_QUEUEREASON_BREAK = 200 THEN 'ROTURA'
+            WHEN ID_QUEUEREASON IN (1, 2) AND ID_QUEUEREASON_COMPLETE = 20 THEN 'COMPLETE'
+            ELSE ''
+          END,
+        fecha_fin_op AS DATAHORA_COMPL, -- como en las views
+        CONVERT(date, fecha_fin_op) AS DATA_COMPLETE, -- fecha 'completa'
+        username AS USERNAME,
+        centro_trabajo AS CENTRO_TRABAJO,
+        -- tiempos y fechas de backend (ISO)
+        eventdt,
+        fecha_inicio_op,
+        fecha_fin_op,
+        fecha_rotura,
+        fecha_pedido,
+        fecha_entrega_prog,
+        -- métricas de tiempo (segundos)
+        t_trabajo_seg =
+          CASE WHEN fecha_inicio_op IS NOT NULL AND fecha_fin_op IS NOT NULL
+            THEN DATEDIFF(SECOND, fecha_inicio_op, fecha_fin_op) END,
+        t_entre_operaciones_seg =
+          CASE WHEN prev_eventdt IS NOT NULL
+            THEN DATEDIFF(SECOND, prev_eventdt, eventdt) END,
+        t_espera_prev_maquina_seg =
+          CASE WHEN prev_eventdt IS NOT NULL AND fecha_inicio_op IS NOT NULL
+            THEN DATEDIFF(SECOND, prev_eventdt, fecha_inicio_op) END,
+        t_desde_pedido_seg =
+          CASE WHEN fecha_pedido IS NOT NULL
+            THEN DATEDIFF(SECOND, fecha_pedido, eventdt) END,
+        t_hasta_entrega_prog_seg =
+          CASE WHEN fecha_entrega_prog IS NOT NULL
+            THEN DATEDIFF(SECOND, eventdt, fecha_entrega_prog) END,
+        t_ciclo_pieza_total_seg =
+          DATEDIFF(
+            SECOND,
+            MIN(eventdt) OVER (PARTITION BY pedido, linea, ID_ITEMS),
+            MAX(eventdt) OVER (PARTITION BY pedido, linea, ID_ITEMS)
+          ),
+        -- extras útiles para depurar/agrupaciones
+        linea, ID_ORDDETT, ID_ITEMS,
+        PROGR,
+        trabajo,
+        desc_trabajo
+      FROM ORDEN
+      ORDER BY pedido, linea, eventdt;
+    `;
+
+    // Ejecutar la consulta
+    const result = await request.query(query);
+
+    // Enviar la respuesta
+    res.status(200).json(result.recordset);
+  } catch (err) {
+    console.error('Error en la consulta SQL:', err);
+    res.status(500).json({ error: 'Error en el servidor: ' + err.message });
   }
 });
 
