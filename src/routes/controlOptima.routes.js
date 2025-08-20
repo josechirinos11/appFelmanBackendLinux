@@ -1389,7 +1389,6 @@ DECLARE @useDateFilter bit = CASE WHEN @usedFrom IS NULL OR @usedTo IS NULL THEN
 
 IF OBJECT_ID('tempdb..#COMPUTED') IS NOT NULL DROP TABLE #COMPUTED;
 
-
 -- ================== BASE: piezas completadas ==================
 WITH BASE AS (
 SELECT
