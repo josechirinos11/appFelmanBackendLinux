@@ -1360,11 +1360,10 @@ router.get('/qw/lookups', async (req, res) => {
  *   page, pageSize -> paginación (por defecto 1 y 50; máx 500)
  */
 
-// GET /control-optima/piezas-maquina-2025
+
 router.get("/piezas-maquina-2025", async (req, res) => {
   const pool = await poolPromise;
 
-  // --- Parámetros de entrada ---
   const {
     from: fromStr,
     to: toStr,
@@ -1373,10 +1372,10 @@ router.get("/piezas-maquina-2025", async (req, res) => {
     pageSize = 50,
   } = req.query || {};
 
+  // Normalizaciones
   const from = fromStr ? new Date(fromStr) : null;
   const to = toStr ? new Date(toStr) : null;
   const search = (searchStr || "").trim();
-
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const pageSz = Math.max(1, Math.min(500, parseInt(pageSize, 10) || 50));
   const offset = (pageNum - 1) * pageSz;
@@ -1384,159 +1383,168 @@ router.get("/piezas-maquina-2025", async (req, res) => {
   try {
     const request = pool.request();
 
+    // Parámetros SQL
     request.input("from", sql.DateTime, from || null);
     request.input("to", sql.DateTime, to || null);
     request.input("search", sql.NVarChar(100), search || null);
     request.input("offset", sql.Int, offset);
     request.input("pageSize", sql.Int, pageSz);
 
-    // NOTA: no partas palabras reservadas (FETCH) ni pongas alias sueltos.
+    // Consulta: usa #SALIDA para evitar el problema de ámbito de las CTE
     const query = `
-SET NOCOUNT ON;
+      SET NOCOUNT ON;
 
-DECLARE @fromDt DATETIME = @from;
-DECLARE @toDt   DATETIME = @to;
+      -- 1) Base cruda con todas las columnas necesarias
+      WITH BASE AS (
+        SELECT
+          QW.ID_QUEUEWORK, QW.ID_WORKKIND,
+          WK.CODICE                  AS trabajo,
+          WK.DESCRIZIONE             AS desc_trabajo,
+          QH.CDL_NAME                AS CENTRO_TRABAJO,
+          QW.[USERNAME]              AS USERNAME,
+          QW.DATESTART               AS fecha_inicio_op,
+          QW.DATEEND                 AS fecha_fin_op,
+          QW.DATEBROKEN              AS fecha_rotura,
+          QW.ID_QUEUEREASON,
+          QW.ID_QUEUEREASON_COMPLETE,
+          QW.ID_QUEUEREASON_BREAK,
+          OM.RIGA                    AS linea,
+          OI.RIF                     AS pedido,
+          ISNULL(OI.descr1_sped,'')  AS nombre,
+          OI.DATAORD                 AS fecha_pedido,
+          OI.DATACONS                AS fecha_entrega_prog,
+          COALESCE(QW.DATEEND, QW.DATESTART, QW.DATEBROKEN) AS eventdt,
+          QW.ID_ITEMS, QW.ID_ORDDETT, QW.PROGR
+        FROM dbo.QUEUEWORK     AS QW
+        JOIN dbo.QUEUEHEADER   AS QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+        JOIN dbo.WORKKIND      AS WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+        JOIN dbo.ORDMAST       AS OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+        JOIN dbo.ORDINI        AS OI ON OI.ID_ORDINI      = OM.ID_ORDINI
+        WHERE QW.ID_QUEUEREASON IN (1,2)         -- operaciones reales
+          AND QW.ID_QUEUEREASON_COMPLETE = 20    -- completadas
+      ),
+      -- 2) Pedidos con al menos un evento en el rango
+      PEDIDOS_EN_RANGO AS (
+        SELECT DISTINCT b.pedido
+        FROM BASE b
+        WHERE (@from IS NULL OR b.eventdt >= @from)
+          AND (@to   IS NULL OR b.eventdt <  @to)
+      ),
+      -- 3) Añadir referencia al evento previo por (pedido, linea, pieza)
+      ORDEN AS (
+        SELECT
+          b.*,
+          LAG(b.eventdt) OVER (
+            PARTITION BY b.pedido, b.linea, b.ID_ITEMS
+            ORDER BY b.eventdt
+          ) AS prev_eventdt
+        FROM BASE b
+        WHERE b.pedido IN (SELECT pedido FROM PEDIDOS_EN_RANGO)
+      )
+      -- 4) Persistimos resultado en tabla temporal para poder consultarlo 2 veces
+      SELECT
+        -- claves/etiquetas base
+        pedido                           AS PEDIDO,
+        nombre                           AS NOMBRE,
+        ESTADO =
+          CASE
+            WHEN ID_QUEUEREASON_BREAK = 200 THEN 'ROTURA'
+            WHEN ID_QUEUEREASON IN (1,2) AND ID_QUEUEREASON_COMPLETE = 20 THEN 'COMPLETE'
+            ELSE ''
+          END,
+        fecha_fin_op                     AS DATAHORA_COMPL,
+        CONVERT(date, fecha_fin_op)      AS DATA_COMPLETE,
+        USERNAME,
+        CENTRO_TRABAJO,
 
--- Defaults cuando no pasan fechas
-IF @fromDt IS NULL AND @toDt IS NULL
-BEGIN
-  SET @toDt = SYSUTCDATETIME();
-  SET @fromDt = DATEADD(DAY, -7, @toDt);
-END;
-IF @fromDt IS NULL SET @fromDt = DATEADD(DAY, -30, ISNULL(@toDt, SYSUTCDATETIME()));
-IF @toDt   IS NULL SET @toDt   = DATEADD(DAY, 1, @fromDt);
+        -- tiempos y fechas (ISO)
+        eventdt,
+        fecha_inicio_op,
+        fecha_fin_op,
+        fecha_rotura,
+        fecha_pedido,
+        fecha_entrega_prog,
 
-WITH BASE AS (
-  SELECT
-    QW.ID_QUEUEWORK, QW.ID_WORKKIND,
-    WK.CODICE                      AS trabajo,
-    WK.DESCRIZIONE                 AS desc_trabajo,
-    QH.CDL_NAME                    AS centro_trabajo,
-    QW.[USERNAME]                  AS username,
-    QW.DATESTART                   AS fecha_inicio_op,
-    QW.DATEEND                     AS fecha_fin_op,
-    QW.DATEBROKEN                  AS fecha_rotura,
-    QW.ID_QUEUEREASON,
-    QW.ID_QUEUEREASON_COMPLETE,
-    QW.ID_QUEUEREASON_BREAK,
-    OM.RIGA                        AS linea,
-    OI.RIF                         AS pedido,
-    ISNULL(OI.descr1_sped, '')     AS nombre,
-    OI.DATAORD                     AS fecha_pedido,
-    OI.DATACONS                    AS fecha_entrega_prog,
-    COALESCE(QW.DATEEND, QW.DATESTART, QW.DATEBROKEN) AS eventdt,
-    QW.ID_ITEMS, QW.ID_ORDDETT, QW.PROGR
-  FROM dbo.QUEUEWORK   AS QW
-  JOIN dbo.QUEUEHEADER AS QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-  JOIN dbo.WORKKIND    AS WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-  JOIN dbo.ORDMAST     AS OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-  JOIN dbo.ORDINI      AS OI ON OI.ID_ORDINI      = OM.ID_ORDINI
-  WHERE QW.ID_QUEUEREASON IN (1,2)            -- operaciones reales
-    AND QW.ID_QUEUEREASON_COMPLETE = 20       -- completadas
-    AND ISNULL(QW.DATEEND,'') <> ''           -- como en las views
-),
-PEDIDOS_EN_RANGO AS (
-  SELECT DISTINCT b.pedido
-  FROM BASE b
-  WHERE b.eventdt >= @fromDt
-    AND b.eventdt <  @toDt
-),
-ORDEN AS (
-  SELECT
-    b.*,
-    LAG(b.eventdt) OVER (
-      PARTITION BY b.pedido, b.linea, b.ID_ITEMS
-      ORDER BY b.eventdt
-    ) AS prev_eventdt
-  FROM BASE b
-  WHERE b.pedido IN (SELECT pedido FROM PEDIDOS_EN_RANGO)
-),
-SALIDA AS (
-  SELECT
-    b.pedido                           AS PEDIDO,
-    b.nombre                           AS NOMBRE,
-    CASE
-      WHEN b.ID_QUEUEREASON_BREAK = 200 THEN 'ROTURA'
-      WHEN b.ID_QUEUEREASON IN (1,2) AND b.ID_QUEUEREASON_COMPLETE = 20 THEN 'COMPLETE'
-      ELSE ''
-    END                                AS ESTADO,
-    b.fecha_fin_op                     AS DATAHORA_COMPL,
-    CONVERT(date, b.fecha_fin_op)      AS DATA_COMPLETE,
-    b.username                         AS USERNAME,
-    b.centro_trabajo                   AS CENTRO_TRABAJO,
+        -- métricas de tiempo (segundos)
+        t_trabajo_seg =
+          CASE WHEN fecha_inicio_op IS NOT NULL AND fecha_fin_op IS NOT NULL
+               THEN DATEDIFF(SECOND, fecha_inicio_op, fecha_fin_op) END,
 
-    b.eventdt,
-    b.fecha_inicio_op,
-    b.fecha_fin_op,
-    b.fecha_rotura,
-    b.fecha_pedido,
-    b.fecha_entrega_prog,
+        t_entre_operaciones_seg =
+          CASE WHEN prev_eventdt IS NOT NULL
+               THEN DATEDIFF(SECOND, prev_eventdt, eventdt) END,
 
-    CASE WHEN b.fecha_inicio_op IS NOT NULL AND b.fecha_fin_op IS NOT NULL
-         THEN DATEDIFF(SECOND, b.fecha_inicio_op, b.fecha_fin_op) END
-                                       AS t_trabajo_seg,
+        t_espera_prev_maquina_seg =
+          CASE WHEN prev_eventdt IS NOT NULL AND fecha_inicio_op IS NOT NULL
+               THEN DATEDIFF(SECOND, prev_eventdt, fecha_inicio_op) END,
 
-    CASE WHEN o.prev_eventdt IS NOT NULL
-         THEN DATEDIFF(SECOND, o.prev_eventdt, b.eventdt) END
-                                       AS t_entre_operaciones_seg,
+        t_desde_pedido_seg =
+          CASE WHEN fecha_pedido IS NOT NULL
+               THEN DATEDIFF(SECOND, fecha_pedido, eventdt) END,
 
-    CASE WHEN o.prev_eventdt IS NOT NULL AND b.fecha_inicio_op IS NOT NULL
-         THEN DATEDIFF(SECOND, o.prev_eventdt, b.fecha_inicio_op) END
-                                       AS t_espera_prev_maquina_seg,
+        t_hasta_entrega_prog_seg =
+          CASE WHEN fecha_entrega_prog IS NOT NULL
+               THEN DATEDIFF(SECOND, eventdt, fecha_entrega_prog) END,
 
-    CASE WHEN b.fecha_pedido IS NOT NULL
-         THEN DATEDIFF(SECOND, b.fecha_pedido, b.eventdt) END
-                                       AS t_desde_pedido_seg,
+        t_ciclo_pieza_total_seg =
+          DATEDIFF(
+            SECOND,
+            MIN(eventdt) OVER (PARTITION BY pedido, linea, ID_ITEMS),
+            MAX(eventdt) OVER (PARTITION BY pedido, linea, ID_ITEMS)
+          ),
 
-    CASE WHEN b.fecha_entrega_prog IS NOT NULL
-         THEN DATEDIFF(SECOND, b.eventdt, b.fecha_entrega_prog) END
-                                       AS t_hasta_entrega_prog_seg,
+        -- extras útiles
+        linea,
+        ID_ITEMS,
+        ID_ORDDETT,
+        PROGR,
+        trabajo,
+        desc_trabajo
+      INTO #SALIDA
+      FROM ORDEN
+      WHERE
+        -- filtro de búsqueda (si viene)
+        (
+          @search IS NULL OR @search = '' OR
+          PEDIDO LIKE '%' + @search + '%' OR
+          NOMBRE LIKE '%' + @search + '%' OR
+          USERNAME LIKE '%' + @search + '%' OR
+          CENTRO_TRABAJO LIKE '%' + @search + '%' OR
+          trabajo LIKE '%' + @search + '%' OR
+          desc_trabajo LIKE '%' + @search + '%'
+        );
 
-    DATEDIFF(
-      SECOND,
-      MIN(b.eventdt) OVER (PARTITION BY b.pedido, b.linea, b.ID_ITEMS),
-      MAX(b.eventdt) OVER (PARTITION BY b.pedido, b.linea, b.ID_ITEMS)
-    )                                  AS t_ciclo_pieza_total_seg,
+      -- 5) META (recordset 1)
+      SELECT
+        total = COUNT(*),
+        usedFrom = MIN(eventdt),
+        usedTo   = MAX(eventdt)
+      FROM #SALIDA;
 
-    b.linea,
-    b.ID_ITEMS,
-    b.ID_ORDDETT,
-    b.PROGR,
-    b.trabajo,
-    b.desc_trabajo
-  FROM ORDEN o
-  JOIN BASE b
-    ON b.ID_QUEUEWORK = o.ID_QUEUEWORK
-  WHERE (@search IS NULL OR @search = '' OR
-        b.pedido         LIKE '%' + @search + '%' OR
-        b.nombre         LIKE '%' + @search + '%' OR
-        b.centro_trabajo LIKE '%' + @search + '%' OR
-        b.username       LIKE '%' + @search + '%' OR
-        b.trabajo        LIKE '%' + @search + '%' OR
-        b.desc_trabajo   LIKE '%' + @search + '%')
-)
-
--- 1) Meta (total filas) en resultset 1
-SELECT COUNT(1) AS total
-FROM SALIDA;
-
--- 2) Items paginados en resultset 2
-SELECT *
-FROM SALIDA
-ORDER BY PEDIDO, linea, eventdt
-OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
+      -- 6) ITEMS (recordset 2) - paginado estable
+      SELECT
+        PEDIDO, NOMBRE, ESTADO, DATAHORA_COMPL, DATA_COMPLETE, USERNAME, CENTRO_TRABAJO,
+        eventdt, fecha_inicio_op, fecha_fin_op, fecha_rotura, fecha_pedido, fecha_entrega_prog,
+        t_trabajo_seg, t_entre_operaciones_seg, t_espera_prev_maquina_seg,
+        t_desde_pedido_seg, t_hasta_entrega_prog_seg, t_ciclo_pieza_total_seg,
+        linea, ID_ITEMS, ID_ORDDETT, PROGR, trabajo, desc_trabajo
+      FROM #SALIDA
+      ORDER BY PEDIDO, linea, eventdt
+      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
     `;
 
     const result = await request.query(query);
 
-    const metaRow = result.recordsets[0]?.[0] || { total: 0 };
-    const items = result.recordsets[1] || [];
+    const meta = result.recordsets?.[0]?.[0] || { total: 0, usedFrom: from, usedTo: to };
+    const items = result.recordsets?.[1] || [];
 
     res.json({
       ok: true,
       page: pageNum,
       pageSize: pageSz,
-      total: metaRow.total || 0,
+      total: meta.total || 0,
+      usedFrom: meta.usedFrom || from || null,
+      usedTo: meta.usedTo || to || null,
       items,
     });
   } catch (err) {
