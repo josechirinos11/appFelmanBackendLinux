@@ -1359,10 +1359,12 @@ router.get('/qw/lookups', async (req, res) => {
  *   search         -> texto libre (opcional; busca en PEDIDO, NOMBRE, CENTRO_TRABAJO, USERNAME, trabajo/desc_trabajo)
  *   page, pageSize -> paginación (por defecto 1 y 50; máx 500)
  */
+
+// GET /control-optima/piezas-maquina-2025
 router.get("/piezas-maquina-2025", async (req, res) => {
   const pool = await poolPromise;
 
-  // --- Parámetros de entrada del cliente ---
+  // --- Parámetros de entrada ---
   const {
     from: fromStr,
     to: toStr,
@@ -1371,10 +1373,10 @@ router.get("/piezas-maquina-2025", async (req, res) => {
     pageSize = 50,
   } = req.query || {};
 
-  // Normalizaciones básicas
   const from = fromStr ? new Date(fromStr) : null;
   const to = toStr ? new Date(toStr) : null;
   const search = (searchStr || "").trim();
+
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const pageSz = Math.max(1, Math.min(500, parseInt(pageSize, 10) || 50));
   const offset = (pageNum - 1) * pageSz;
@@ -1382,46 +1384,62 @@ router.get("/piezas-maquina-2025", async (req, res) => {
   try {
     const request = pool.request();
 
-    // --- Parámetros SQL ---
     request.input("from", sql.DateTime, from || null);
     request.input("to", sql.DateTime, to || null);
     request.input("search", sql.NVarChar(100), search || null);
     request.input("offset", sql.Int, offset);
     request.input("pageSize", sql.Int, pageSz);
 
-    // --- Consulta principal ---
+    // NOTA: no partas palabras reservadas (FETCH) ni pongas alias sueltos.
     const query = `
 SET NOCOUNT ON;
+
+DECLARE @fromDt DATETIME = @from;
+DECLARE @toDt   DATETIME = @to;
+
+-- Defaults cuando no pasan fechas
+IF @fromDt IS NULL AND @toDt IS NULL
+BEGIN
+  SET @toDt = SYSUTCDATETIME();
+  SET @fromDt = DATEADD(DAY, -7, @toDt);
+END;
+IF @fromDt IS NULL SET @fromDt = DATEADD(DAY, -30, ISNULL(@toDt, SYSUTCDATETIME()));
+IF @toDt   IS NULL SET @toDt   = DATEADD(DAY, 1, @fromDt);
 
 WITH BASE AS (
   SELECT
     QW.ID_QUEUEWORK, QW.ID_WORKKIND,
-    WK.CODICE                AS trabajo,
-    WK.DESCRIZIONE           AS desc_trabajo,
-    QH.CDL_NAME              AS centro_trabajo,
-    QW.[USERNAME]            AS username,
-    QW.DATESTART             AS fecha_inicio_op,
-    QW.DATEEND               AS fecha_fin_op,
-    QW.DATEBROKEN            AS fecha_rotura,
+    WK.CODICE                      AS trabajo,
+    WK.DESCRIZIONE                 AS desc_trabajo,
+    QH.CDL_NAME                    AS centro_trabajo,
+    QW.[USERNAME]                  AS username,
+    QW.DATESTART                   AS fecha_inicio_op,
+    QW.DATEEND                     AS fecha_fin_op,
+    QW.DATEBROKEN                  AS fecha_rotura,
     QW.ID_QUEUEREASON,
     QW.ID_QUEUEREASON_COMPLETE,
     QW.ID_QUEUEREASON_BREAK,
-    OM.RIGA                  AS linea,
-    OI.RIF                   AS pedido,
-    ISNULL(OI.descr1_sped,'') AS nombre,
-    OI.DATAORD               AS fecha_pedido,
-    OI.DATACONS              AS fecha_entrega_prog,
+    OM.RIGA                        AS linea,
+    OI.RIF                         AS pedido,
+    ISNULL(OI.descr1_sped, '')     AS nombre,
+    OI.DATAORD                     AS fecha_pedido,
+    OI.DATACONS                    AS fecha_entrega_prog,
     COALESCE(QW.DATEEND, QW.DATESTART, QW.DATEBROKEN) AS eventdt,
     QW.ID_ITEMS, QW.ID_ORDDETT, QW.PROGR
-  FROM dbo.QUEUEWORK     AS QW
-  INNER JOIN dbo.QUEUEHEADER   AS QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-  INNER JOIN dbo.WORKKIND      AS WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-  INNER JOIN dbo.ORDMAST       AS OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-  INNER JOIN dbo.ORDINI        AS OI ON OI.ID_ORDINI      = OM.ID_ORDINI
-  WHERE QW.ID_QUEUEREASON IN (1,2)
-    AND QW.ID_QUEUEREASON_COMPLETE = 20
-    AND (@from IS NULL OR COALESCE(QW.DATEEND, QW.DATESTART, QW.DATEBROKEN) >= @from)
-    AND (@to   IS NULL OR COALESCE(QW.DATEEND, QW.DATESTART, QW.DATEBROKEN) <  @to)
+  FROM dbo.QUEUEWORK   AS QW
+  JOIN dbo.QUEUEHEADER AS QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+  JOIN dbo.WORKKIND    AS WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+  JOIN dbo.ORDMAST     AS OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+  JOIN dbo.ORDINI      AS OI ON OI.ID_ORDINI      = OM.ID_ORDINI
+  WHERE QW.ID_QUEUEREASON IN (1,2)            -- operaciones reales
+    AND QW.ID_QUEUEREASON_COMPLETE = 20       -- completadas
+    AND ISNULL(QW.DATEEND,'') <> ''           -- como en las views
+),
+PEDIDOS_EN_RANGO AS (
+  SELECT DISTINCT b.pedido
+  FROM BASE b
+  WHERE b.eventdt >= @fromDt
+    AND b.eventdt <  @toDt
 ),
 ORDEN AS (
   SELECT
@@ -1431,10 +1449,10 @@ ORDEN AS (
       ORDER BY b.eventdt
     ) AS prev_eventdt
   FROM BASE b
+  WHERE b.pedido IN (SELECT pedido FROM PEDIDOS_EN_RANGO)
 ),
-F AS (
+SALIDA AS (
   SELECT
-    -- claves/etiquetas base para el frontend
     b.pedido                           AS PEDIDO,
     b.nombre                           AS NOMBRE,
     CASE
@@ -1447,7 +1465,6 @@ F AS (
     b.username                         AS USERNAME,
     b.centro_trabajo                   AS CENTRO_TRABAJO,
 
-    -- tiempos y fechas de backend
     b.eventdt,
     b.fecha_inicio_op,
     b.fecha_fin_op,
@@ -1455,76 +1472,71 @@ F AS (
     b.fecha_pedido,
     b.fecha_entrega_prog,
 
-    -- métricas de tiempo (segundos)
     CASE WHEN b.fecha_inicio_op IS NOT NULL AND b.fecha_fin_op IS NOT NULL
-         THEN DATEDIFF(SECOND, b.fecha_inicio_op, b.fecha_fin_op) END AS t_trabajo_seg,
+         THEN DATEDIFF(SECOND, b.fecha_inicio_op, b.fecha_fin_op) END
+                                       AS t_trabajo_seg,
 
-    CASE WHEN b.prev_eventdt IS NOT NULL
-         THEN DATEDIFF(SECOND, b.prev_eventdt, b.eventdt) END AS t_entre_operaciones_seg,
+    CASE WHEN o.prev_eventdt IS NOT NULL
+         THEN DATEDIFF(SECOND, o.prev_eventdt, b.eventdt) END
+                                       AS t_entre_operaciones_seg,
 
-    CASE WHEN b.prev_eventdt IS NOT NULL AND b.fecha_inicio_op IS NOT NULL
-         THEN DATEDIFF(SECOND, b.prev_eventdt, b.fecha_inicio_op) END AS t_espera_prev_maquina_seg,
+    CASE WHEN o.prev_eventdt IS NOT NULL AND b.fecha_inicio_op IS NOT NULL
+         THEN DATEDIFF(SECOND, o.prev_eventdt, b.fecha_inicio_op) END
+                                       AS t_espera_prev_maquina_seg,
 
     CASE WHEN b.fecha_pedido IS NOT NULL
-         THEN DATEDIFF(SECOND, b.fecha_pedido, b.eventdt) END AS t_desde_pedido_seg,
+         THEN DATEDIFF(SECOND, b.fecha_pedido, b.eventdt) END
+                                       AS t_desde_pedido_seg,
 
     CASE WHEN b.fecha_entrega_prog IS NOT NULL
-         THEN DATEDIFF(SECOND, b.eventdt, b.fecha_entrega_prog) END AS t_hasta_entrega_prog_seg,
+         THEN DATEDIFF(SECOND, b.eventdt, b.fecha_entrega_prog) END
+                                       AS t_hasta_entrega_prog_seg,
 
     DATEDIFF(
       SECOND,
       MIN(b.eventdt) OVER (PARTITION BY b.pedido, b.linea, b.ID_ITEMS),
       MAX(b.eventdt) OVER (PARTITION BY b.pedido, b.linea, b.ID_ITEMS)
-    ) AS t_ciclo_pieza_total_seg,
+    )                                  AS t_ciclo_pieza_total_seg,
 
-    -- extras útiles / depuración
     b.linea,
     b.ID_ITEMS,
     b.ID_ORDDETT,
     b.PROGR,
     b.trabajo,
     b.desc_trabajo
-  FROM ORDEN b
-  WHERE
-    @search IS NULL OR @search = '' OR
-    b.pedido         LIKE '%' + @search + '%' OR
-    b.nombre         LIKE '%' + @search + '%' OR
-    b.centro_trabajo LIKE '%' + @search + '%' OR
-    b.username       LIKE '%' + @search + '%' OR
-    b.trabajo        LIKE '%' + @search + '%' OR
-    b.desc_trabajo   LIKE '%' + @search + '%'
+  FROM ORDEN o
+  JOIN BASE b
+    ON b.ID_QUEUEWORK = o.ID_QUEUEWORK
+  WHERE (@search IS NULL OR @search = '' OR
+        b.pedido         LIKE '%' + @search + '%' OR
+        b.nombre         LIKE '%' + @search + '%' OR
+        b.centro_trabajo LIKE '%' + @search + '%' OR
+        b.username       LIKE '%' + @search + '%' OR
+        b.trabajo        LIKE '%' + @search + '%' OR
+        b.desc_trabajo   LIKE '%' + @search + '%')
 )
 
--- 1) Meta (total y eco del rango aplicado)
-SELECT
-  COUNT(1) AS total,
-  @from     AS usedFrom,
-  @to       AS usedTo
-FROM F;
+-- 1) Meta (total filas) en resultset 1
+SELECT COUNT(1) AS total
+FROM SALIDA;
 
--- 2) Items paginados
-SELECT
-  *
-FROM F
-ORDER BY PEDIDO, linea, eventdt, ID_ITEMS, PROGR
+-- 2) Items paginados en resultset 2
+SELECT *
+FROM SALIDA
+ORDER BY PEDIDO, linea, eventdt
 OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
-`;
+    `;
 
     const result = await request.query(query);
-    const meta = result.recordsets[0]?.[0] || {
-      total: 0,
-      usedFrom: from,
-      usedTo: to,
-    };
+
+    const metaRow = result.recordsets[0]?.[0] || { total: 0 };
     const items = result.recordsets[1] || [];
 
     res.json({
       ok: true,
       page: pageNum,
       pageSize: pageSz,
-      total: meta.total,
-      usedFrom: meta.usedFrom,
-      usedTo: meta.usedTo,
+      total: metaRow.total || 0,
       items,
     });
   } catch (err) {
