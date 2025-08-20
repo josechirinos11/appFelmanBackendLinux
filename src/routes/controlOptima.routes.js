@@ -1355,198 +1355,114 @@ router.get('/qw/lookups', async (req, res) => {
 // /control-optima/piezas-maquina  (robusta: fechas opcionales + backfill por pedido + sin paginación)
 // === /control-optima/piezas-maquina (robusta, sin paginación) =================
 // === /control-optima/piezas-maquina (robusta, sin paginación) =================
+// Ruta: /piezas-maquina
+// Requiere tener configurado: const { sql, poolPromise } = require('../db'); // Ejemplo
+
 router.get('/piezas-maquina', async (req, res) => {
-  const pool = await poolPromise;
-
   try {
-    // 1) Parámetros de entrada
-    const {
-      from: fromStr,
-      to: toStr,
-      search: searchStr,
-    } = req.query || {};
+    const pool = await poolPromise;
 
-    const today = new Date();
-    const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
-    const endOfDay   = (d) => { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; };
+    // Query params: ?from=2025-07-01&to=2025-08-31
+    const { from, to } = req.query;
 
-    const from = fromStr ? new Date(fromStr) : startOfDay(today);
-    const to   = toStr   ? new Date(toStr)   : endOfDay(today);
-    const q = (searchStr || '').trim();
+    // Parseo seguro: si no vienen, quedan en null (no filtra)
+    const fromDt = from ? new Date(from) : null;
+    const toDt   = to   ? new Date(to)   : null;
 
-    // 2) SQL principal (CTEs encadenadas) — OJO: usar nombre distinto a 'sql'
+    // SQL principal: pedidos “tocados” en rango -> traer TODO el pedido
     const query = `
-SET NOCOUNT ON;
+      USE OPTIMA_FELMAN;
+      SET NOCOUNT ON;
 
-;WITH BASE_RANGO AS (
-  SELECT
-    O.RIF                                AS PEDIDO,
-    OM.RIGA                               AS LINEA,
-    QW.ID_ITEMS,
-    QW.ID_ORDDETT,
-    QW.ID_WORKKIND,
-    QW.PROGR,
-    QH.CDL_NAME                           AS CENTRO_TRABAJO,
-    QW.[USERNAME]                         AS USERNAME,
-    WK.CODICE                             AS TRABAJO,
-    WK.DESCRIZIONE                        AS DESC_TRABAJO,
-    QW.DATESTART                          AS FECHA_INICIO_OP,
-    QW.DATEEND                            AS FECHA_FIN_OP,
-    COALESCE(QW.DATEEND, QW.DATESTART)    AS eventdt,
-    O.DATAORD                             AS fecha_pedido,
-    O.DATACONS                            AS fecha_entrega_prog,
-    -- Vidrio / medidas / producto
-    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' ELSE ISNULL(M.CODICE,'') END          AS VIDRIO,
-    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0  ELSE FLOOR(OD.ID_DETT/2)+1 END        AS N_VIDRIO,
-    OD.DIMXPZR                             AS MEDIDA_X,
-    OD.DIMYPZR                             AS MEDIDA_Y,
-    CAST(OD.DIMXPZR*OD.DIMYPZR/1000000.0 AS decimal(18,6)) AS AREA,
-    OM.QTAPZ                               AS PZ_LIN,
-    PR.RIF                                 AS PRODUCTO,
-    P.DESCR1                               AS CLIENTE
-  FROM dbo.QUEUEWORK     QW   WITH (NOLOCK)
-  JOIN dbo.QUEUEHEADER   QH   WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-  JOIN dbo.WORKKIND      WK   WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-  JOIN dbo.ORDMAST       OM   WITH (NOLOCK) ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-  JOIN dbo.ORDINI        O    WITH (NOLOCK) ON O.ID_ORDINI       = OM.ID_ORDINI
-  LEFT JOIN dbo.DBASEORDINI   OD   WITH (NOLOCK) ON OD.ID_ORDDETT = QW.ID_ORDDETT
-  LEFT JOIN dbo.MATERIALI     M    WITH (NOLOCK) ON M.ID_MATERIALI = OD.ID_MATERIALI
-  LEFT JOIN dbo.PRODOTTI      PR   WITH (NOLOCK) ON PR.ID_PRODOTTI = OM.ID_PRODOTTI
-  LEFT JOIN dbo.PERSONE       P    WITH (NOLOCK) ON P.ID_PERSONE   = O.ID_PERSONE
-  WHERE
-      QW.ID_QUEUEREASON IN (1,2)
-  AND QW.ID_QUEUEREASON_COMPLETE = 20
-  AND COALESCE(QW.DATEEND, QW.DATESTART) >= @from
-  AND COALESCE(QW.DATEEND, QW.DATESTART) <  DATEADD(DAY, 1, @to)
-  AND (
-        @q = N''
-     OR  O.RIF LIKE @q
-     OR  P.DESCR1 LIKE @q
-     OR  QH.CDL_NAME LIKE @q
-     OR  QW.[USERNAME] LIKE @q
-     OR  PR.RIF LIKE @q
-     OR  M.CODICE LIKE @q
-  )
-),
-PEDIDOS_EN_RANGO AS (
-  SELECT DISTINCT PEDIDO FROM BASE_RANGO
-),
-BASE_TODAS AS (
-  SELECT
-    O.RIF                                AS PEDIDO,
-    OM.RIGA                               AS LINEA,
-    QW.ID_ITEMS,
-    QW.ID_ORDDETT,
-    QW.ID_WORKKIND,
-    QW.PROGR,
-    QH.CDL_NAME                           AS CENTRO_TRABAJO,
-    QW.[USERNAME]                         AS USERNAME,
-    WK.CODICE                             AS TRABAJO,
-    WK.DESCRIZIONE                        AS DESC_TRABAJO,
-    QW.DATESTART                          AS FECHA_INICIO_OP,
-    QW.DATEEND                            AS FECHA_FIN_OP,
-    COALESCE(QW.DATEEND, QW.DATESTART)    AS eventdt,
-    O.DATAORD                             AS fecha_pedido,
-    O.DATACONS                            AS fecha_entrega_prog,
-    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' ELSE ISNULL(M.CODICE,'') END          AS VIDRIO,
-    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0  ELSE FLOOR(OD.ID_DETT/2)+1 END        AS N_VIDRIO,
-    OD.DIMXPZR                             AS MEDIDA_X,
-    OD.DIMYPZR                             AS MEDIDA_Y,
-    CAST(OD.DIMXPZR*OD.DIMYPZR/1000000.0 AS decimal(18,6)) AS AREA,
-    OM.QTAPZ                               AS PZ_LIN,
-    PR.RIF                                 AS PRODUCTO,
-    P.DESCR1                               AS CLIENTE
-  FROM dbo.QUEUEWORK     QW   WITH (NOLOCK)
-  JOIN dbo.QUEUEHEADER   QH   WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-  JOIN dbo.WORKKIND      WK   WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-  JOIN dbo.ORDMAST       OM   WITH (NOLOCK) ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-  JOIN dbo.ORDINI        O    WITH (NOLOCK) ON O.ID_ORDINI       = OM.ID_ORDINI
-  LEFT JOIN dbo.DBASEORDINI   OD   WITH (NOLOCK) ON OD.ID_ORDDETT = QW.ID_ORDDETT
-  LEFT JOIN dbo.MATERIALI     M    WITH (NOLOCK) ON M.ID_MATERIALI = OD.ID_MATERIALI
-  LEFT JOIN dbo.PRODOTTI      PR   WITH (NOLOCK) ON PR.ID_PRODOTTI = OM.ID_PRODOTTI
-  LEFT JOIN dbo.PERSONE       P    WITH (NOLOCK) ON P.ID_PERSONE   = O.ID_PERSONE
-  WHERE
-      QW.ID_QUEUEREASON IN (1,2)
-  AND QW.ID_QUEUEREASON_COMPLETE = 20
-  AND O.RIF IN (SELECT PEDIDO FROM PEDIDOS_EN_RANGO)
-),
-ORDEN AS (
-  SELECT
-    b.*,
-    LAG(b.eventdt) OVER (
-      PARTITION BY b.PEDIDO, b.LINEA, b.ID_ITEMS
-      ORDER BY b.eventdt
-    ) AS prev_eventdt,
-    CASE WHEN b.eventdt < @from OR b.eventdt >= DATEADD(DAY,1,@to) THEN 1 ELSE 0 END AS fuera_de_rango
-  FROM BASE_TODAS b
-)
-SELECT
-  PEDIDO,
-  LINEA,
-  ID_ITEMS,
-  ID_ORDDETT,
-  ID_WORKKIND,
-  PROGR,
-  CENTRO_TRABAJO,
-  USERNAME,
-  TRABAJO,
-  DESC_TRABAJO,
-  FECHA_INICIO_OP,
-  FECHA_FIN_OP,
-  eventdt,
-  fecha_pedido,
-  fecha_entrega_prog,
-  VIDRIO,
-  N_VIDRIO,
-  MEDIDA_X,
-  MEDIDA_Y,
-  AREA,
-  PZ_LIN,
-  PRODUCTO,
-  CLIENTE,
-  fuera_de_rango,
-  CASE WHEN FECHA_INICIO_OP IS NOT NULL AND FECHA_FIN_OP IS NOT NULL
-       THEN DATEDIFF(SECOND, FECHA_INICIO_OP, FECHA_FIN_OP) END                                     AS t_trabajo_seg,
-  CASE WHEN prev_eventdt IS NOT NULL AND FECHA_INICIO_OP IS NOT NULL
-       THEN DATEDIFF(SECOND, prev_eventdt, FECHA_INICIO_OP) END                                     AS t_espera_prev_maquina_seg,
-  CASE WHEN prev_eventdt IS NOT NULL
-       THEN DATEDIFF(SECOND, prev_eventdt, eventdt) END                                             AS t_entre_operaciones_seg,
-  CASE WHEN fecha_pedido IS NOT NULL
-       THEN DATEDIFF(SECOND, fecha_pedido, eventdt) END                                             AS t_desde_pedido_seg,
-  CASE WHEN fecha_entrega_prog IS NOT NULL
-       THEN DATEDIFF(SECOND, eventdt, fecha_entrega_prog) END                                       AS t_hasta_entrega_prog_seg,
-  DATEDIFF(
-    SECOND,
-    MIN(eventdt) OVER (PARTITION BY PEDIDO, LINEA, ID_ITEMS),
-    MAX(eventdt) OVER (PARTITION BY PEDIDO, LINEA, ID_ITEMS)
-  )                                                                                                  AS t_ciclo_pieza_total_seg
-FROM ORDEN
-ORDER BY PEDIDO, LINEA, eventdt;
-`;
+      -- 1) Base con columnas necesarias y unificamos el "instante" del evento
+      WITH BASE AS (
+        SELECT
+          OI.RIF                   AS pedido,
+          OM.RIGA                  AS linea,
+          QH.CDL_NAME              AS centro_trabajo,
+          WK.CODICE                AS trabajo,
+          WK.DESCRIZIONE           AS desc_trabajo,
+          QW.[USERNAME]            AS username,
+          QW.DATESTART             AS fecha_inicio_op,
+          QW.DATEEND               AS fecha_fin_op,
+          COALESCE(QW.DATEEND, QW.DATESTART, QW.DATEBROKEN) AS eventdt,
+          OI.DATAORD               AS fecha_pedido,
+          OI.DATACONS              AS fecha_entrega_prog,
+          QW.ID_ITEMS, QW.ID_ORDDETT, QW.ID_WORKKIND, QW.PROGR
+        FROM dbo.QUEUEWORK QW
+        JOIN dbo.QUEUEHEADER QH ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+        JOIN dbo.WORKKIND    WK ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+        JOIN dbo.ORDMAST     OM ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+        JOIN dbo.ORDINI      OI ON OI.ID_ORDINI      = OM.ID_ORDINI
+        WHERE
+          QW.ID_QUEUEREASON IN (1,2)          -- realizadas
+          AND QW.ID_QUEUEREASON_COMPLETE = 20 -- completadas
+      ),
 
-    // 3) Ejecución
+      -- 2) Conjunto de pedidos que tienen AL MENOS un evento dentro del rango pedido
+      PEDIDOS_EN_RANGO AS (
+        SELECT DISTINCT b.pedido
+        FROM BASE b
+        WHERE
+          (@from IS NULL OR b.eventdt >= @from)
+          AND (@to   IS NULL OR b.eventdt < DATEADD(DAY, 1, @to))
+      ),
+
+      -- 3) Ordenamos y traemos TODAS las filas de esos pedidos (aunque estén fuera del rango)
+      ORDEN AS (
+        SELECT
+          b.*,
+          LAG(b.eventdt) OVER (
+            PARTITION BY b.pedido, b.linea, b.ID_ITEMS
+            ORDER BY b.eventdt
+          ) AS prev_eventdt
+        FROM BASE b
+        WHERE b.pedido IN (SELECT pedido FROM PEDIDOS_EN_RANGO)
+      )
+
+      -- 4) Salida con métricas de tiempo
+      SELECT
+        pedido, linea, centro_trabajo, username, trabajo, desc_trabajo,
+        fecha_inicio_op, fecha_fin_op, eventdt,
+        t_trabajo_seg =
+          CASE WHEN fecha_inicio_op IS NOT NULL AND fecha_fin_op IS NOT NULL
+               THEN DATEDIFF(SECOND, fecha_inicio_op, fecha_fin_op) END,
+        t_entre_operaciones_seg =
+          CASE WHEN prev_eventdt IS NOT NULL
+               THEN DATEDIFF(SECOND, prev_eventdt, eventdt) END,
+        t_espera_prev_maquina_seg =
+          CASE WHEN prev_eventdt IS NOT NULL AND fecha_inicio_op IS NOT NULL
+               THEN DATEDIFF(SECOND, prev_eventdt, fecha_inicio_op) END,
+        t_desde_pedido_seg =
+          CASE WHEN fecha_pedido IS NOT NULL
+               THEN DATEDIFF(SECOND, fecha_pedido, eventdt) END,
+        t_hasta_entrega_prog_seg =
+          CASE WHEN fecha_entrega_prog IS NOT NULL
+               THEN DATEDIFF(SECOND, eventdt, fecha_entrega_prog) END,
+        t_ciclo_pieza_total_seg =
+          DATEDIFF(
+            SECOND,
+            MIN(eventdt) OVER (PARTITION BY pedido, linea, ID_ITEMS),
+            MAX(eventdt) OVER (PARTITION BY pedido, linea, ID_ITEMS)
+          )
+      FROM ORDEN
+      ORDER BY pedido, linea, eventdt;
+    `;
+
     const request = pool.request();
-    request.input('from', sql.DateTime2, from);
-    request.input('to',   sql.DateTime2, to);
-    request.input('q',    sql.NVarChar(120), q ? `%${q}%` : '');
+    // Evita el error de "type undefined" usando tipos explícitos de mssql siempre
+    request.input('from', sql.DateTime, fromDt);
+    request.input('to',   sql.DateTime, toDt);
 
     const result = await request.query(query);
 
-    // 4) Respuesta
     return res.json({
       ok: true,
-      params: { from, to, search: q },
-      meta: {
-        total: result?.recordset?.length || 0,
-        notas: [
-          'Se incluyen registros “fuera de fechas” del mismo pedido, marcados con fuera_de_rango=1.',
-          'DESC_TRABAJO incluido.',
-          'Sin paginación por pedido/cliente/centro/operario para evitar colisiones de agrupado.',
-        ],
-      },
-      data: result.recordset || [],
+      rows: result.recordset || [],
+      count: result.recordset?.length ?? 0,
+      range: { from: fromDt, to: toDt },
+      note: 'Incluye TODOS los registros de cualquier pedido que tenga al menos un evento dentro del rango solicitado.',
     });
-
   } catch (err) {
     console.error('❌ /piezas-maquina (robusta) ERROR:', err);
     return res.status(500).json({
@@ -1556,6 +1472,7 @@ ORDER BY PEDIDO, LINEA, eventdt;
     });
   }
 });
+
 
 
 
