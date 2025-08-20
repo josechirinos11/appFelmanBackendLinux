@@ -1537,7 +1537,7 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
   }
 });
 
-module.exports = router;
+
 
 
 
