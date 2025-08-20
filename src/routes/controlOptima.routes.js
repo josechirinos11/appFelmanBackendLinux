@@ -1349,107 +1349,111 @@ router.get('/qw/lookups', async (req, res) => {
 // GET /control-optima/piezas-maquina
 
 // GET /control-optima/piezas-maquina
+// EN: src/routes/controlOptima.routes.js
+// ==== /control-optima/piezas-maquina  (SIN PAGINACIÓN + OPCIÓN A FECHA HOY) ====
+
 router.get('/piezas-maquina', async (req, res) => {
   const pool = await poolPromise;
 
-  // --- Parámetros de entrada del cliente ---
-  const {
-    from: fromStr,
-    to: toStr,
-    search: searchStr,
-    page = 1,
-    pageSize = 50,
-  } = req.query || {};
+  // --- Parámetros del cliente ---
+  const { from: fromStr, to: toStr, search: searchStr } = req.query || {};
 
-  // Normalizaciones básicas
-  const from = fromStr ? new Date(fromStr) : null;
-  const to = toStr ? new Date(toStr) : null;
+  // ==== Opción A: si no llega fecha, usar día en curso ====
+  // - Si faltan ambas → from = to = hoy
+  // - Si llega solo una → la otra = misma fecha
+  const today = new Date();
+  const pad = (n) => (n < 10 ? '0' + n : '' + n);
+  const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+  let fromISO = (typeof fromStr === 'string' && fromStr.trim()) ? fromStr.trim() : null;
+  let toISO   = (typeof toStr   === 'string' && toStr.trim())   ? toStr.trim()   : null;
+
+  if (!fromISO && !toISO) {
+    fromISO = ymd(today);
+    toISO   = ymd(today);
+  } else if (fromISO && !toISO) {
+    toISO = fromISO;
+  } else if (!fromISO && toISO) {
+    fromISO = toISO;
+  }
+
+  // Búsqueda libre
   const search = (searchStr || '').trim();
-  const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const pageSz = Math.max(1, Math.min(500, parseInt(pageSize, 10) || 50));
-  const offset = (pageNum - 1) * pageSz;
 
   try {
     const request = pool.request();
-
-    // --- Parámetros SQL ---
-    request.input('from', sql.DateTime, from || null);
-    request.input('to', sql.DateTime, to || null);
+    request.input('from',   sql.Date, fromISO);
+    request.input('to',     sql.Date, toISO);
     request.input('search', sql.NVarChar(100), search || null);
-    request.input('offset', sql.Int, offset);
-    request.input('pageSize', sql.Int, pageSz);
 
-    // --- Consulta principal ---
     const query = `
-      SET NOCOUNT ON;
+SET NOCOUNT ON;
 
-DECLARE @usedFrom DATE = @from;
-DECLARE @usedTo   DATE = @to;
-DECLARE @useDateFilter bit = CASE WHEN @usedFrom IS NULL OR @usedTo IS NULL THEN 0 ELSE 1 END;
+DECLARE @usedFrom date = @from;
+DECLARE @usedTo   date = @to;
 
 IF OBJECT_ID('tempdb..#COMPUTED') IS NOT NULL DROP TABLE #COMPUTED;
 
 -- ================== BASE: piezas completadas ==================
 WITH BASE AS (
-SELECT
-  O.RIF                                  AS PEDIDO,
-  ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
-  OM.RIGA                                AS LINEA,
-  CONVERT(date, QW.DATEEND)              AS DATA_COMPLETE,
-  QW.[USERNAME]                          AS USERNAME,
-  WK.CODICE                              AS TRABAJO,
-  WK.DESCRIZIONE                         AS DESC_TRABAJO,
-  QH.CDL_NAME                            AS CENTRO_TRABAJO,
-  CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' ELSE ISNULL(M.CODICE,'') END  AS VIDRIO,
-  CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0 ELSE FLOOR(OD.ID_DETT/2)+1 END AS N_VIDRIO,
-  CASE WHEN QW.ID_QUEUEREASON IN (1,2) THEN 'COMPLETE' ELSE '' END            AS ESTADO,
-  QW.DATEEND                             AS DATAHORA_COMPL,
-  CAST(1 AS INT)                         AS PIEZAS,
-  OD.DIMXPZR                             AS MEDIDA_X,
-  OD.DIMYPZR                             AS MEDIDA_Y,
-  CAST(OD.DIMXPZR*OD.DIMYPZR/1000000.0 AS decimal(18,6)) AS AREA,
-  OM.QTAPZ                               AS PZ_LIN,
-  QW.PROGR                               AS PROGR,
-  PR.RIF                                 AS PRODUCTO,
-  CAST(DB.PERIMETRO/1000.0 AS decimal(18,6)) AS PERIMETRO,
-  CASE WHEN WK.ID_TIPILAVORAZIONE = 301 AND WK.PRIOWORK IN (20,30)
-       THEN CAST(DB.LENTOTBARRE/1000.0 AS decimal(18,6)) ELSE 0 END AS LONG_TRABAJO,
-  DB.ID_DBASEORDINI,
-  QW.ID_ITEMS,
-  O.ID_ORDINI,
-  QW.DATESTART                           AS FECHA_INICIO_OP,
-  QW.DATEEND                             AS FECHA_FIN_OP,
-  QW.DATEBROKEN                          AS FECHA_ROTURA,
-  O.DATAORD                              AS fecha_pedido,
-  O.DATACONS                             AS fecha_entrega_prog
-FROM OPTIMA_FELMAN.dbo.QUEUEWORK    AS QW   WITH (NOLOCK)
-JOIN OPTIMA_FELMAN.dbo.QUEUEHEADER  AS QH   WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
-JOIN OPTIMA_FELMAN.dbo.WORKKIND     AS WK   WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
-JOIN OPTIMA_FELMAN.dbo.ORDMAST      AS OM   WITH (NOLOCK) ON OM.ID_ORDMAST     = QW.ID_ORDMAST
-JOIN OPTIMA_FELMAN.dbo.ORDINI       AS O    WITH (NOLOCK) ON O.ID_ORDINI       = OM.ID_ORDINI
-JOIN OPTIMA_FELMAN.dbo.ORDDETT      AS OD   WITH (NOLOCK) ON OD.ID_ORDDETT     = QW.ID_ORDDETT
-LEFT JOIN OPTIMA_FELMAN.dbo.MAGAZ   AS M    WITH (NOLOCK) ON M.ID_MAGAZ        = OD.ID_MAGAZ
-LEFT JOIN OPTIMA_FELMAN.dbo.ITEMS   AS IT   WITH (NOLOCK) ON IT.ID_ITEMS       = QW.ID_ITEMS
-LEFT JOIN OPTIMA_FELMAN.dbo.DBASEORDINI AS DB WITH (NOLOCK) ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
-LEFT JOIN OPTIMA_FELMAN.dbo.PRODOTTI    AS PR WITH (NOLOCK) ON PR.ID_PRODOTTI  = OM.ID_PRODOTTI
-WHERE QW.ID_QUEUEREASON IN (1,2)
-  AND QW.ID_QUEUEREASON_COMPLETE = 20
-  AND QW.DATEEND IS NOT NULL
-  AND YEAR(QW.DATESTART) > 2018
-  AND ( @useDateFilter = 0
-        OR QW.DATEEND >= @usedFrom AND QW.DATEEND < DATEADD(DAY, 1, @usedTo) )
-  AND ( @search IS NULL OR @search = ''
-        OR O.RIF           LIKE '%' + @search + '%'
-        OR QW.[USERNAME]   LIKE '%' + @search + '%'
-        OR WK.CODICE       LIKE '%' + @search + '%'
-        OR QH.CDL_NAME     LIKE '%' + @search + '%'
-        OR PR.RIF          LIKE '%' + @search + '%'
-        OR ISNULL(M.CODICE,'') LIKE '%' + @search + '%' )
+  SELECT
+    O.RIF                                  AS PEDIDO,
+    ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
+    OM.RIGA                                AS LINEA,
+    CONVERT(date, QW.DATEEND)              AS DATA_COMPLETE,
+    QW.[USERNAME]                          AS USERNAME,
+    WK.CODICE                              AS TRABAJO,
+    WK.DESCRIZIONE                         AS DESC_TRABAJO,
+    QH.CDL_NAME                            AS CENTRO_TRABAJO,
+    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' ELSE ISNULL(M.CODICE,'') END  AS VIDRIO,
+    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0 ELSE FLOOR(OD.ID_DETT/2)+1 END AS N_VIDRIO,
+    CASE WHEN QW.ID_QUEUEREASON IN (1,2) THEN 'COMPLETE' ELSE '' END            AS ESTADO,
+    QW.DATEEND                             AS DATAHORA_COMPL,
+    CAST(1 AS INT)                         AS PIEZAS,
+    OD.DIMXPZR                             AS MEDIDA_X,
+    OD.DIMYPZR                             AS MEDIDA_Y,
+    CAST(OD.DIMXPZR*OD.DIMYPZR/1000000.0 AS decimal(18,6)) AS AREA,
+    OM.QTAPZ                               AS PZ_LIN,
+    QW.PROGR                               AS PROGR,
+    PR.RIF                                 AS PRODUCTO,
+    CAST(DB.PERIMETRO/1000.0 AS decimal(18,6)) AS PERIMETRO,
+    CASE WHEN WK.ID_TIPILAVORAZIONE = 301 AND WK.PRIOWORK IN (20,30)
+         THEN CAST(DB.LENTOTBARRE/1000.0 AS decimal(18,6)) ELSE 0 END AS LONG_TRABAJO,
+    DB.ID_DBASEORDINI,
+    QW.ID_ITEMS,
+    O.ID_ORDINI,
+    QW.DATESTART                           AS FECHA_INICIO_OP,
+    QW.DATEEND                             AS FECHA_FIN_OP,
+    QW.DATEBROKEN                          AS FECHA_ROTURA,
+    O.DATAORD                              AS fecha_pedido,
+    O.DATACONS                             AS fecha_entrega_prog
+  FROM OPTIMA_FELMAN.dbo.QUEUEWORK    AS QW   WITH (NOLOCK)
+  JOIN OPTIMA_FELMAN.dbo.QUEUEHEADER  AS QH   WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+  JOIN OPTIMA_FELMAN.dbo.WORKKIND     AS WK   WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+  JOIN OPTIMA_FELMAN.dbo.ORDMAST      AS OM   WITH (NOLOCK) ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+  JOIN OPTIMA_FELMAN.dbo.ORDINI       AS O    WITH (NOLOCK) ON O.ID_ORDINI       = OM.ID_ORDINI
+  JOIN OPTIMA_FELMAN.dbo.ORDDETT      AS OD   WITH (NOLOCK) ON OD.ID_ORDDETT     = QW.ID_ORDDETT
+  LEFT JOIN OPTIMA_FELMAN.dbo.MAGAZ   AS M    WITH (NOLOCK) ON M.ID_MAGAZ        = OD.ID_MAGAZ
+  LEFT JOIN OPTIMA_FELMAN.dbo.ITEMS   AS IT   WITH (NOLOCK) ON IT.ID_ITEMS       = QW.ID_ITEMS
+  LEFT JOIN OPTIMA_FELMAN.dbo.DBASEORDINI AS DB WITH (NOLOCK) ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
+  LEFT JOIN OPTIMA_FELMAN.dbo.PRODOTTI    AS PR WITH (NOLOCK) ON PR.ID_PRODOTTI  = OM.ID_PRODOTTI
+  WHERE QW.ID_QUEUEREASON IN (1,2)
+    AND QW.ID_QUEUEREASON_COMPLETE = 20
+    AND QW.DATEEND IS NOT NULL
+    AND YEAR(QW.DATESTART) > 2018
+    AND QW.DATEEND >= @usedFrom
+    AND QW.DATEEND < DATEADD(DAY, 1, @usedTo)
+    AND ( @search IS NULL OR @search = ''
+          OR O.RIF            LIKE '%' + @search + '%'
+          OR QW.[USERNAME]    LIKE '%' + @search + '%'
+          OR WK.CODICE        LIKE '%' + @search + '%'
+          OR WK.DESCRIZIONE   LIKE '%' + @search + '%'   -- DESC_TRABAJO
+          OR QH.CDL_NAME      LIKE '%' + @search + '%'
+          OR PR.RIF           LIKE '%' + @search + '%'
+          OR ISNULL(M.CODICE,'') LIKE '%' + @search + '%' )
 ),
 ENRICH AS (
-  SELECT
-    b.*,
-    COALESCE(b.DATAHORA_COMPL, CAST(b.DATA_COMPLETE AS datetime)) AS eventdt
+  SELECT b.*, COALESCE(b.DATAHORA_COMPL, CAST(b.DATA_COMPLETE AS datetime)) AS eventdt
   FROM BASE b
 ),
 ORDENED AS (
@@ -1477,21 +1481,26 @@ COMPUTED AS (
     )                                                                                   AS t_ciclo_pieza_total_seg
   FROM ORDENED o
 )
-
 SELECT * INTO #COMPUTED FROM COMPUTED;
 
--- ================ META =================
+-- ===== META (totales) =====
 SELECT
   @usedFrom AS usedFrom,
   @usedTo   AS usedTo,
   COUNT(*)                                        AS total,
   ISNULL(SUM(CAST(PIEZAS AS float)), 0)           AS piezas,
   ISNULL(SUM(CAST(AREA   AS float)), 0)           AS area
+INTO #META
 FROM #COMPUTED;
 
--- ================ ITEMS (paginado) ================
+-- ===== DEVOLUCIÓN =====
+-- 1) Meta
+SELECT * FROM #META;
+
+-- 2) Items (SIN paginación): todo el rango pedido
 SELECT
-  PEDIDO, NOMBRE, LINEA, DATA_COMPLETE, USERNAME, TRABAJO, DESC_TRABAJO,
+  PEDIDO, NOMBRE, LINEA, DATA_COMPLETE, USERNAME,
+  TRABAJO, DESC_TRABAJO,                      -- <= requerido por frontend
   CENTRO_TRABAJO, VIDRIO, N_VIDRIO, ESTADO, DATAHORA_COMPL,
   PIEZAS, MEDIDA_X, MEDIDA_Y, AREA, PZ_LIN, PROGR, PRODUCTO, PERIMETRO, LONG_TRABAJO,
   eventdt,
@@ -1507,24 +1516,25 @@ SELECT
   t_hasta_entrega_prog_seg,
   t_ciclo_pieza_total_seg
 FROM #COMPUTED
-ORDER BY eventdt DESC
-OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
-    `;
+ORDER BY eventdt DESC;`;
 
     const result = await request.query(query);
-    const meta = result.recordsets[0][0] || { total: 0, piezas: 0, area: 0, usedFrom: from, usedTo: to };
-    const items = result.recordsets[1] || [];
 
-    res.json({
+    // recordsets[0] = meta, recordsets[1] = items
+    const meta  = result.recordsets?.[0]?.[0] || { total: 0, piezas: 0, area: 0, usedFrom: fromISO, usedTo: toISO };
+    const items = result.recordsets?.[1] || [];
+
+    return res.json({
       ok: true,
-      page: pageNum,
-      pageSize: pageSz,
+      usedFrom: meta.usedFrom,
+      usedTo: meta.usedTo,
       total: meta.total,
-      items,
+      agg: { piezas: meta.piezas, area: meta.area },
+      items
     });
   } catch (err) {
-    console.error('❌ /piezas-maquina ERROR:', err);
-    res.status(500).json({
+    console.error('❌ /piezas-maquina (sin paginación) ERROR:', err);
+    return res.status(500).json({
       ok: false,
       message: '/piezas-maquina failed',
       detail: err?.message || String(err),
