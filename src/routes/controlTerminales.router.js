@@ -346,4 +346,159 @@ router.get("/lotesfabricaciones/columns", async (req, res) => {
   }
 });
 
+
+// ...existing code...
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+// Reporte completo para un NumeroManual
+
+// Reporte completo para un NumeroManual
+router.get('/reporte', async (req, res) => {
+  const { num_manual } = req.query;
+  if (!num_manual) {
+    return res.status(400).json({ status: 'error', message: 'Falta num_manual' });
+  }
+
+  try {
+    // Obtener Codigo de lote a partir de NumeroManual
+    const [loteRows] = await pool.execute(
+      'SELECT Codigo FROM lotes WHERE NumeroManual = ? LIMIT 1',
+      [num_manual]
+    );
+
+    if (loteRows.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'Lote no encontrado para el NumeroManual proporcionado' });
+    }
+
+    const codigoLote = loteRows[0].Codigo;
+
+    // A) Quién trabajó
+    const [quienTrabajo] = await pool.execute(
+      `SELECT CodigoOperario, OperarioNombre
+       FROM vw_operarios_por_lote
+       WHERE CodigoLote = ?
+       ORDER BY OperarioNombre`,
+      [codigoLote]
+    );
+
+    // B) Tiempos por operario y tarea
+    const [tiemposPorOperario] = await pool.execute(
+      `SELECT OperarioNombre, CodigoOperario, Tarea, SegundosDedicados, HH_MM_SS
+       FROM vw_tiempos_por_operario_lote
+       WHERE CodigoLote = ?
+       ORDER BY OperarioNombre, Tarea`,
+      [codigoLote]
+    );
+
+    // C) Actividades abiertas ahora mismo
+    const [activasAhora] = await pool.execute(
+      `SELECT OperarioNombre, CodigoOperario, CodigoTarea, FechaInicio, HoraInicio, Abierta
+       FROM vw_abiertas_por_lote
+       WHERE CodigoLote = ?
+       ORDER BY FechaInicio, HoraInicio`,
+      [codigoLote]
+    );
+
+    // D) Línea de tiempo completa
+    const [timeline] = await pool.execute(
+      `SELECT OperarioNombre, CodigoOperario, CodigoTarea,
+              FechaInicio, HoraInicio, FechaFin, HoraFin, TiempoDedicado
+       FROM vw_timeline
+       WHERE CodigoLote = ?
+       ORDER BY CONCAT(FechaInicio, ' ', HoraInicio), Linea`,
+      [codigoLote]
+    );
+
+    // E) Operarios actualmente “enganchados” al lote (estado operativo)
+    const [operariosEnganchados] = await pool.execute(
+      `SELECT Codigo, Nombre, CodigoTareaActual, Momento
+       FROM operarios
+       WHERE LoteActual = ?
+       ORDER BY Nombre`,
+      [codigoLote]
+    );
+
+    return res.status(200).json({
+      status: 'ok',
+      num_manual,
+      codigoLote,
+      reporte: {
+        quienTrabajo,
+        tiemposPorOperario,
+        activasAhora,
+        timeline,
+        operariosEnganchados,
+      },
+    });
+  } catch (error) {
+    console.error('❌ ERROR EN /control-terminales/reporte:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+
+router.get('/tiempos-operario-lote', async (req, res) => {
+  const { num_manual } = req.query;
+  if (!num_manual) {
+    return res.status(400).json({ status: 'error', message: 'Falta num_manual' });
+  }
+
+  const sql = `
+    SELECT
+      OperarioNombre,
+      CodigoOperario,
+      COALESCE(CodigoTarea,'(SIN TAREA)') AS Tarea,
+      SUM(COALESCE(TiempoDedicado,0))    AS SegundosDedicados,
+      SEC_TO_TIME(SUM(COALESCE(TiempoDedicado,0))) AS HH_MM_SS
+    FROM vpartestodo
+    WHERE CodigoLote = (SELECT Codigo FROM lotes WHERE NumeroManual = ?)
+    GROUP BY OperarioNombre, CodigoOperario, CodigoTarea
+    ORDER BY OperarioNombre, Tarea
+  `;
+
+  try {
+    const [rows] = await pool.execute(sql, [num_manual]);
+    res.status(200).json(rows);
+  } catch (error) {
+    console.error('❌ ERROR EN /control-terminales/tiempos-por-operario:', error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+router.get('/historico-operarios-lotes-actuales', async (req, res) => {
+  const sql = `
+    SELECT
+      v.OperarioNombre,
+      COALESCE(v.CodigoTarea,'(SIN TAREA)') AS Tarea,
+      COUNT(*)                      AS Registros,
+      COUNT(DISTINCT v.CodigoLote)  AS LotesDistintos,
+      ROUND(SUM(COALESCE(v.TiempoDedicado,0))/86400, 2) AS DiasTotales
+    FROM vpartestodo v
+    INNER JOIN lotes l
+      ON v.CodigoLote = l.Codigo
+    GROUP BY v.OperarioNombre, v.CodigoTarea
+    ORDER BY v.OperarioNombre, Tarea
+  `;
+
+  try {
+    const [rows] = await pool.execute(sql);
+    res.status(200).json(rows);
+  } catch (error) {
+    console.error('❌ ERROR EN /control-terminales/operarios-por-lotes-actuales:', error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
 module.exports = router;
