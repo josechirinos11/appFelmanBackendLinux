@@ -647,6 +647,177 @@ ORDER BY PEDIDO, LINEA, EVENTDT;
   }
 });
 
+// POST /control-optima/piezas-maquinas-total
+router.post("/piezas-maquinas-total", async (req, res) => {
+  const { desde, hasta } = req.body;
+
+  if (!desde || !hasta) {
+    return res.status(400).json({ error: "Debe indicar 'desde' y 'hasta' (YYYY-MM-DD)" });
+  }
+
+  try {
+    const pool = await sql.connect({
+      user: process.env.DB_USER_OPTIMA,
+      password: process.env.DB_PASS_OPTIMA,
+      server: process.env.DB_HOST_OPTIMA,
+      port: parseInt(process.env.DB_PORT_OPTIMA, 10),
+      database: process.env.DB_NAME_OPTIMA, // puede ser Felman_2024; abajo forzamos OPTIMA_FELMAN en FROM
+      options: { encrypt: false }
+    });
+
+    const query = `
+      SET NOCOUNT ON;
+
+DECLARE @d DATETIME = @desde;                      -- 'YYYY-MM-DD' 00:00:00
+DECLARE @h DATETIME = DATEADD(DAY, 1, @hasta);     -- exclusivo (hasta + 1 día)
+
+-- 1) BASE: todas las operaciones (sin filtro de completadas) + columnas extra solicitadas
+WITH BASE AS (
+  SELECT
+    O.RIF                                  AS PEDIDO,
+    ISNULL(O.DESCR1_SPED,'')               AS NOMBRE,
+    OM.RIGA                                AS LINEA,
+    CONVERT(date, COALESCE(QW.DATEEND, QW.DATESTART, QW.DATEBROKEN)) AS DATA_COMPLETE,
+    QW.[USERNAME]                          AS USERNAME,
+    WK.CODICE                              AS TRABAJO,
+    WK.DESCRIZIONE                         AS DESC_TRABAJO,
+    QH.CDL_NAME                            AS CENTRO_TRABAJO,
+
+    -- VIDRIO / N_VIDRIO (excepción para LINEA_FOREL)
+    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN '' ELSE ISNULL(M.CODICE,'') END  AS VIDRIO,
+    CASE WHEN QH.CDL_NAME = 'LINEA_FOREL' THEN 0 ELSE FLOOR(OD.ID_DETT/2)+1 END AS N_VIDRIO,
+
+    -- Estado y evento (sin filtro de completadas)
+    CASE 
+      WHEN QW.ID_QUEUEREASON_COMPLETE = 20 THEN 'COMPLETE'
+      WHEN QW.ID_QUEUEREASON_COMPLETE IS NOT NULL THEN 'IN_PROGRESS'
+      ELSE 'PENDING'
+    END AS ESTADO,
+    COALESCE(QW.DATEEND, QW.DATESTART, QW.DATEBROKEN) AS DATAHORA_COMPL,
+
+    -- Métricas pieza
+    CAST(1 AS INT)                         AS PIEZAS,
+    OD.DIMXPZR                             AS MEDIDA_X,
+    OD.DIMYPZR                             AS MEDIDA_Y,
+    CAST(OD.DIMXPZR*OD.DIMYPZR/1000000.0 AS decimal(18,6)) AS AREA,
+    OM.QTAPZ                               AS PZ_LIN,
+
+    -- Extra solicitados
+    QW.PROGR                               AS PROGR,       -- PROGR: 2, etc.
+    PR.RIF                                 AS PRODUCTO,    -- código de producto
+
+    -- Claves y tiempos base
+    QW.ID_ITEMS,
+    QW.ID_ORDDETT,
+    O.ID_ORDINI,
+    QW.DATESTART                           AS FECHA_INICIO_OP,
+    QW.DATEEND                             AS FECHA_FIN_OP,
+    O.DATAORD                              AS FECHA_PEDIDO,
+    O.DATACONS                             AS FECHA_ENTREGA_PROG,
+
+    -- Instante de evento para ordenar/filtrar (end/start/broken – como fallback)
+    COALESCE(QW.DATEEND, QW.DATESTART, QW.DATEBROKEN)     AS EVENTDT
+  FROM OPTIMA_FELMAN.dbo.QUEUEWORK    AS QW   WITH (NOLOCK)
+  JOIN OPTIMA_FELMAN.dbo.QUEUEHEADER  AS QH   WITH (NOLOCK) ON QH.ID_QUEUEHEADER = QW.ID_QUEUEHEADER
+  JOIN OPTIMA_FELMAN.dbo.WORKKIND     AS WK   WITH (NOLOCK) ON WK.ID_WORKKIND    = QW.ID_WORKKIND
+  JOIN OPTIMA_FELMAN.dbo.ORDMAST      AS OM   WITH (NOLOCK) ON OM.ID_ORDMAST     = QW.ID_ORDMAST
+  JOIN OPTIMA_FELMAN.dbo.ORDINI       AS O    WITH (NOLOCK) ON O.ID_ORDINI       = OM.ID_ORDINI
+  JOIN OPTIMA_FELMAN.dbo.ORDDETT      AS OD   WITH (NOLOCK) ON OD.ID_ORDDETT     = QW.ID_ORDDETT
+  LEFT JOIN OPTIMA_FELMAN.dbo.MAGAZ   AS M    WITH (NOLOCK) ON M.ID_MAGAZ        = OD.ID_MAGAZ
+  LEFT JOIN OPTIMA_FELMAN.dbo.ITEMS   AS IT   WITH (NOLOCK) ON IT.ID_ITEMS       = QW.ID_ITEMS
+  LEFT JOIN OPTIMA_FELMAN.dbo.DBASEORDINI AS DB WITH (NOLOCK) ON DB.ID_DBASEORDINI = IT.ID_DBASEORDINI
+  LEFT JOIN OPTIMA_FELMAN.dbo.PRODOTTI     AS PR WITH (NOLOCK) ON PR.ID_PRODOTTI   = OM.ID_PRODOTTI
+  WHERE QW.ID_QUEUEREASON IN (1,2)                -- operaciones reales (sin filtro de completadas)
+),
+
+-- 2) Pedidos con al menos un evento dentro del rango (>= @d y < @h)
+PEDIDOS_EN_RANGO AS (
+  SELECT DISTINCT b.PEDIDO
+  FROM BASE b
+  WHERE b.EVENTDT >= @d
+    AND b.EVENTDT <  @h
+),
+
+-- 3) ORDEN: lag por pedido/linea/pieza para tiempos de espera y entre operaciones
+ORDEN AS (
+  SELECT
+    b.*,
+    LAG(b.EVENTDT) OVER (
+      PARTITION BY b.PEDIDO, b.LINEA, b.ID_ITEMS
+      ORDER BY b.EVENTDT
+    ) AS PREV_EVENTDT
+  FROM BASE b
+  WHERE b.PEDIDO IN (SELECT PEDIDO FROM PEDIDOS_EN_RANGO)
+)
+
+-- 4) SALIDA FINAL (incluye campos solicitados)
+SELECT
+  PEDIDO,
+  NOMBRE,
+  LINEA,
+  DATA_COMPLETE,
+  USERNAME,
+  TRABAJO,
+  DESC_TRABAJO,
+  CENTRO_TRABAJO,
+
+  VIDRIO,
+  N_VIDRIO,
+  MEDIDA_X,
+  MEDIDA_Y,
+  PROGR,
+  PRODUCTO,
+
+  ESTADO,
+  DATAHORA_COMPL,
+  PIEZAS,
+  AREA,
+  PZ_LIN,
+
+  -- tiempos derivados (segundos)
+  CASE WHEN FECHA_INICIO_OP IS NOT NULL AND FECHA_FIN_OP IS NOT NULL
+       THEN DATEDIFF(SECOND, FECHA_INICIO_OP, FECHA_FIN_OP) END AS t_trabajo_seg,
+  CASE WHEN PREV_EVENTDT IS NOT NULL AND FECHA_INICIO_OP IS NOT NULL
+       THEN DATEDIFF(SECOND, PREV_EVENTDT, FECHA_INICIO_OP) END AS t_espera_prev_maquina_seg,
+  CASE WHEN PREV_EVENTDT IS NOT NULL
+       THEN DATEDIFF(SECOND, PREV_EVENTDT, EVENTDT) END AS t_entre_operaciones_seg,
+  CASE WHEN FECHA_PEDIDO IS NOT NULL
+       THEN DATEDIFF(SECOND, FECHA_PEDIDO, EVENTDT) END AS t_desde_pedido_seg,
+  CASE WHEN FECHA_ENTREGA_PROG IS NOT NULL
+       THEN DATEDIFF(SECOND, EVENTDT, FECHA_ENTREGA_PROG) END AS t_hasta_entrega_prog_seg,
+
+  -- ciclo total de la pieza dentro del pedido/linea
+  DATEDIFF(
+    SECOND,
+    MIN(EVENTDT) OVER (PARTITION BY PEDIDO, LINEA, ID_ITEMS),
+    MAX(EVENTDT) OVER (PARTITION BY PEDIDO, LINEA, ID_ITEMS)
+  ) AS t_ciclo_pieza_total_seg,
+
+  -- extras/ids y timestamps crudos
+  ID_ITEMS,
+  ID_ORDDETT,
+  ID_ORDINI,
+  EVENTDT,
+  FECHA_INICIO_OP,
+  FECHA_FIN_OP,
+  FECHA_PEDIDO,
+  FECHA_ENTREGA_PROG
+FROM ORDEN
+ORDER BY PEDIDO, LINEA, EVENTDT;
+    `;
+
+    const result = await pool.request()
+      .input("desde", sql.DateTime, new Date(`${desde}T00:00:00`))
+      .input("hasta", sql.DateTime, new Date(`${hasta}T00:00:00`))
+      .query(query);
+
+    return res.json(result.recordset ?? []);
+  } catch (err) {
+    console.error("Error en /piezas-maquinas-total:", err);
+    return res.status(500).json({ error: "Error interno en el servidor" });
+  }
+});
+
 
 
 
