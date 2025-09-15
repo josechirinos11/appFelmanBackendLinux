@@ -1,5 +1,6 @@
 const express = require("express");
 const pool = require("../config/databaseTerminales");
+const logger = require('../utils/logger');
 
 const router = express.Router();
 
@@ -309,11 +310,11 @@ router.get("/tiempos-acumulados-modulo", async (req, res) => {
 // GET /control-terminales/tiempo-real
 // Trae todas las filas de vpartestodo filtrando por la fecha de hoy
 router.get('/tiempo-real', async (req, res) => {
+  logger.info('Incoming GET /control-terminales/tiempo-real', { ip: req.ip, query: req.query });
   try {
     const sql = `SELECT * FROM vpartestodo WHERE Fecha = CURDATE() ORDER BY FechaInicio, HoraInicio;`;
     const [rows] = await pool.execute(sql);
-    res.status(200).json(rows);
-    console.error("Consulta Tiempo real de TERMINALES", error);
+  res.status(200).json(rows);
   } catch (error) {
     console.error('❌ ERROR EN /control-terminales/tiempo-real:', error);
     res.status(500).json({ status: 'error', message: error.message });
