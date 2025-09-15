@@ -313,6 +313,7 @@ router.get('/tiempo-real', async (req, res) => {
     const sql = `SELECT * FROM vpartestodo WHERE Fecha = CURDATE() ORDER BY FechaInicio, HoraInicio;`;
     const [rows] = await pool.execute(sql);
     res.status(200).json(rows);
+    console.error("Consulta Tiempo real de TERMINALES", error);
   } catch (error) {
     console.error('❌ ERROR EN /control-terminales/tiempo-real:', error);
     res.status(500).json({ status: 'error', message: error.message });
