@@ -300,7 +300,7 @@ class DatabaseMonitor {
     // Programar ejecuciones cada 5 segundos
     this.intervalId = setInterval(() => {
       this.monitorPresupuestos();
-    }, 5000);
+    }, 10000);
   }
 
   stop() {
