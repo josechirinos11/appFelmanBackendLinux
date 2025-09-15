@@ -306,6 +306,19 @@ router.get("/tiempos-acumulados-modulo", async (req, res) => {
   }
 });
 
+// GET /control-terminales/tiempo-real
+// Trae todas las filas de vpartestodo filtrando por la fecha de hoy
+router.get('/tiempo-real', async (req, res) => {
+  try {
+    const sql = `SELECT * FROM vpartestodo WHERE Fecha = CURDATE() ORDER BY FechaInicio, HoraInicio`;
+    const [rows] = await pool.execute(sql);
+    res.status(200).json(rows);
+  } catch (error) {
+    console.error('❌ ERROR EN /control-terminales/tiempo-real:', error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // GET /control-terminales/lotes/columns
 router.get("/lotes/columns", async (req, res) => {

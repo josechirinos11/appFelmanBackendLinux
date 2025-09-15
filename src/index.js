@@ -1,4 +1,5 @@
 require('dotenv').config();
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const { errors } = require('celebrate');
@@ -6,8 +7,10 @@ const authRoutes = require('./routes/auth.routes');
 const errorHandler = require('./middleware/errorHandler');
 const testRouter = require('./routes/test.router');
 const webhookRoutes = require('./routes/webhook.routes');
+const SocketIO = require('./sockets/config/socket.config');
 
 const controlPedidoRoutes = require('./routes/controlPedido.routes.js');
+const socketRoutes = require('./sockets/routes/socket.routes');
 const controlAccessRoutes = require('./routes/controlAccess.routes.js');
 const controlTerminalesRoutes = require('./routes/controlTerminales.router');
 const controlAlmacenRoutes= require('./routes/controlAlmacen.router.js');
@@ -19,11 +22,29 @@ const rootPath = path.join(__dirname, '..');
 
 //const controlAccessWindowsRoutes = require('./routes/controlAccessWindows.routes.js');
 
-const { ai21Routes } = require('./consultaIA');
+// AI21 eliminado — ya no se carga el módulo de consultaIA
 const DatabaseMonitor = require('./monitoreos/database-monitor');
 
 const app = express();
 
+
+
+//INICIACION MODULO WEDSOCKET
+const server = http.createServer(app);
+// Inicializar Socket.IO
+const socketIO = new SocketIO(server);
+// Inicializar manejadores de eventos
+const SocketHandlers = require('./sockets');
+const socketHandlers = new SocketHandlers(socketIO);
+global.socketHandlers = socketHandlers; // Hacer accesible en toda la aplicación
+//FIN INICIACION MODULO WEDSOCKET
+
+
+
+
+
+// Rutas para monitoreo y pruebas de Socket.IO (separadas en src/sockets/routes)
+app.use('/sockets', socketRoutes);
 // Middleware
 // ① Habilita CORS para que tu app nativa pueda llamar al API
 app.use(cors({
@@ -47,7 +68,8 @@ app.use('/control-optima', controlOptimaRoutes);
 //app.use('/control-access-windows', controlAccessWindowsRoutes);
 
 
-app.use('/ai21', ai21Routes); // Rutas para AI21 Studio
+// Rutas para AI21 Studio (solo si el módulo cargó correctamente)
+
 
 
 
@@ -71,7 +93,8 @@ const HOST = '0.0.0.0'; // Permite conexiones desde cualquier IP
 // Inicializar el monitor de base de datos
 const dbMonitor = new DatabaseMonitor();
 
-app.listen(PORT, HOST, async () => {
+// Usar server.listen en lugar de app.listen para soportar WebSockets
+server.listen(PORT, HOST, async () => {
   console.log('🚀 Versión desplegada: 6 de agosto - 15:00');
 
   console.log(`Servidor corriendo en puerto ${PORT}`);
