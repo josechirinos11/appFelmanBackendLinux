@@ -310,7 +310,7 @@ router.get("/tiempos-acumulados-modulo", async (req, res) => {
 // GET /control-terminales/tiempo-real
 // Trae todas las filas de vpartestodo filtrando por la fecha de hoy
 router.get('/tiempo-real', async (req, res) => {
-  logger.info('Incoming GET /control-terminales/tiempo-real', { ip: req.ip, query: req.query });
+  console.log('PETICION para tiempo-real TERMINALES');
   try {
     const sql = `SELECT * FROM vpartestodo WHERE Fecha = CURDATE() ORDER BY FechaInicio, HoraInicio;`;
     const [rows] = await pool.execute(sql);
