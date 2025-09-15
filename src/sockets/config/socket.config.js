@@ -1,4 +1,5 @@
 const socketIO = require('socket.io');
+const logger = require('../../utils/logger');
 
 class SocketIO {
   constructor(server) {
@@ -19,28 +20,28 @@ class SocketIO {
 
   initializeEvents() {
     this.io.on('connection', (socket) => {
-      console.log('🔌 Nuevo cliente conectado:', socket.id);
+      logger.info('🔌 Nuevo cliente conectado:', socket.id);
 
       // Unirse a una sala específica
       socket.on('subscribe', (room) => {
         socket.join(room);
-        console.log(`🔔 Cliente ${socket.id} se unió a la sala: ${room}`);
+        logger.info(`🔔 Cliente ${socket.id} se unió a la sala: ${room}`);
       });
 
       // Salir de una sala
       socket.on('unsubscribe', (room) => {
         socket.leave(room);
-        console.log(`🚪 Cliente ${socket.id} salió de la sala: ${room}`);
+        logger.info(`🚪 Cliente ${socket.id} salió de la sala: ${room}`);
       });
 
       // Manejar desconexión
       socket.on('disconnect', (reason) => {
-        console.log(`❌ Cliente desconectado: ${socket.id} - Razón: ${reason}`);
+        logger.info(`❌ Cliente desconectado: ${socket.id} - Razón: ${reason}`);
       });
 
       // Manejar errores
       socket.on('error', (error) => {
-        console.error('❌ Error en el socket:', error);
+        logger.error('❌ Error en el socket:', error);
       });
     });
   }
@@ -49,9 +50,9 @@ class SocketIO {
   emitToRoom(room, event, data) {
     try {
       this.io.to(room).emit(event, data);
-      console.log(`📤 Evento '${event}' emitido a la sala '${room}'`);
+      logger.info(`📤 Evento '${event}' emitido a la sala '${room}'`);
     } catch (error) {
-      console.error(`❌ Error al emitir evento '${event}' a la sala '${room}':`, error);
+      logger.error(`❌ Error al emitir evento '${event}' a la sala '${room}':`, error);
     }
   }
 
@@ -59,9 +60,9 @@ class SocketIO {
   emitToAll(event, data) {
     try {
       this.io.emit(event, data);
-      console.log(`📢 Evento '${event}' emitido a todos los clientes`);
+      logger.info(`📢 Evento '${event}' emitido a todos los clientes`);
     } catch (error) {
-      console.error(`❌ Error al emitir evento '${event}' a todos los clientes:`, error);
+      logger.error(`❌ Error al emitir evento '${event}' a todos los clientes:`, error);
     }
   }
 

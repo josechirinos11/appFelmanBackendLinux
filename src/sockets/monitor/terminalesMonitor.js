@@ -1,4 +1,5 @@
 const pool = require('../../config/databaseTerminales');
+const logger = require('../../utils/logger');
 
 class TerminalesMonitor {
   constructor(socketHandlers, intervalMs = 3000) {
@@ -101,11 +102,11 @@ class TerminalesMonitor {
       }
     } catch (error) {
       const msg = error && (error.message || error);
-      console.error('❌ Error en TerminalesMonitor.pollOnce:', msg);
+      logger.error('❌ Error en TerminalesMonitor.pollOnce:', msg);
       // Si es un error de autenticación de MySQL, detener el monitor para evitar spam
       if (error && (error.code === 'ER_ACCESS_DENIED_ERROR' || /Access denied for user/i.test(msg))) {
-        this.stoppedDueToAuth = true;
-        console.error('🛑 TerminalesMonitor detenido: credenciales de DB no autorizadas (Access denied). Verificar usuario/host/password en `src/config/databaseTerminales.js` y permisos en MySQL.');
+  this.stoppedDueToAuth = true;
+  logger.error('🛑 TerminalesMonitor detenido: credenciales de DB no autorizadas (Access denied). Verificar usuario/host/password en `src/config/databaseTerminales.js` y permisos en MySQL.');
         // emitir un evento de error a la sala administrativa si existe
         try {
           if (this.io) this.io.to('terminales').emit('monitor:error', { message: 'Access denied for DB user', detail: msg });
@@ -123,19 +124,19 @@ class TerminalesMonitor {
     this.pollOnce().then(() => {
       if (this.stoppedDueToAuth) return;
       if (this.intervalId) return;
-      this.intervalId = setInterval(() => this.pollOnce(), this.intervalMs);
-      console.log(`🔍 TerminalesMonitor iniciado (interval ${this.intervalMs} ms)`);
+  this.intervalId = setInterval(() => this.pollOnce(), this.intervalMs);
+  logger.info(`🔍 TerminalesMonitor iniciado (interval ${this.intervalMs} ms)`);
     }).catch((e) => {
       // pollOnce maneja internamente los errores; si llegamos aquí, registrar
-      console.error('❌ Error inicial al arrancar TerminalesMonitor:', e && e.message ? e.message : e);
+  logger.error('❌ Error inicial al arrancar TerminalesMonitor:', e && e.message ? e.message : e);
     });
   }
 
   stop() {
     if (!this.intervalId) return;
-    clearInterval(this.intervalId);
-    this.intervalId = null;
-    console.log('🛑 TerminalesMonitor detenido');
+  clearInterval(this.intervalId);
+  this.intervalId = null;
+  logger.info('🛑 TerminalesMonitor detenido');
   }
 }
 
