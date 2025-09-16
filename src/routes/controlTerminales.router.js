@@ -321,6 +321,57 @@ router.get('/tiempo-real', async (req, res) => {
   }
 });
 
+
+router.get('/tiempo-real-nueva', async (req, res) => {
+  console.log('PETICION para tiempo-real TERMINALES');
+  try {
+    const sql = `
+      SELECT
+          h.Serie, h.Numero, h.Fecha, h.CodigoOperario, h.OperarioNombre, h.Tipo,
+          h.Gastos1, h.Gastos2, h.Kms1, h.Kms2,
+          hl.CodigoSerie, hl.CodigoNumero, hl.Linea,
+          hl.FechaInicio, hl.HoraInicio, hl.FechaFin, hl.HoraFin,
+          hl.CodigoPuesto, hl.CodigoTarea,
+          hl.ObraSerie, hl.ObraNumero,
+          hl.FabricacionSerie, hl.FabricacionNumero, hl.FabricacionLinea,
+          hl.NumeroManual, hl.CodigoLote, hl.LoteLinea, hl.Modulo,
+          hl.TiempoDedicado, hl.Abierta, hl.TipoTarea
+      FROM hpartes h
+      JOIN hparteslineas hl
+        ON h.Serie = hl.CodigoSerie
+       AND h.Numero = hl.CodigoNumero
+      WHERE h.Fecha = CURDATE()
+
+      UNION   -- sin ALL para deduplicar
+
+      SELECT
+          p.Serie, p.Numero, p.Fecha, p.CodigoOperario, p.OperarioNombre, p.Tipo,
+          p.Gastos1, p.Gastos2, p.Kms1, p.Kms2,
+          pl.CodigoSerie, pl.CodigoNumero, pl.Linea,
+          pl.FechaInicio, pl.HoraInicio, pl.FechaFin, pl.HoraFin,
+          pl.CodigoPuesto, pl.CodigoTarea,
+          pl.ObraSerie, pl.ObraNumero,
+          pl.FabricacionSerie, pl.FabricacionNumero, pl.FabricacionLinea,
+          pl.NumeroManual, pl.CodigoLote, pl.LoteLinea, pl.Modulo,
+          pl.TiempoDedicado, pl.Abierta, pl.TipoTarea
+      FROM partes p
+      JOIN parteslineas pl
+        ON p.Serie = pl.CodigoSerie
+       AND p.Numero = pl.CodigoNumero
+      WHERE p.Fecha = CURDATE()
+
+      ORDER BY FechaInicio, HoraInicio;
+    `;
+
+    const [rows] = await pool.execute(sql);
+    res.status(200).json(rows);
+  } catch (error) {
+    console.error('❌ ERROR EN /control-terminales/tiempo-real-nueva:', error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // GET /control-terminales/lotes/columns
 router.get("/lotes/columns", async (req, res) => {
