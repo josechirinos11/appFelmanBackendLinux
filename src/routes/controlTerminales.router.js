@@ -428,11 +428,6 @@ router.get('/production-analytics', async (req, res) => {
 
 // GET /control-terminales/production-analytics sin fecha
 router.get('/production-analytics-sin-fechas', async (req, res) => {
-  const { start, end } = req.query;
-  if (!start || !end) {
-    return res.status(400).json({ status: 'error', message: 'Faltan parámetros start y end' });
-  }
-
   try {
     const sql = `
       SELECT
@@ -449,7 +444,6 @@ router.get('/production-analytics-sin-fechas', async (req, res) => {
       JOIN hparteslineas hl
         ON h.Serie = hl.CodigoSerie
        AND h.Numero = hl.CodigoNumero
-      WHERE h.Fecha BETWEEN ? AND ?
 
       UNION
 
@@ -467,15 +461,14 @@ router.get('/production-analytics-sin-fechas', async (req, res) => {
       JOIN parteslineas pl
         ON p.Serie = pl.CodigoSerie
        AND p.Numero = pl.CodigoNumero
-      
 
       ORDER BY FechaInicio, HoraInicio;
     `;
 
-    const [rows] = await pool.execute(sql, [start, end, start, end]);
+    const [rows] = await pool.execute(sql);
     res.status(200).json(rows);
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/production-analytics:', error);
+    console.error('❌ ERROR EN /control-terminales/production-analytics-sin-fechas:', error);
     res.status(500).json({ status: 'error', message: error.message });
   }
 });
