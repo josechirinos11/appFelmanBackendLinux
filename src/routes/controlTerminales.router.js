@@ -431,23 +431,6 @@ router.get('/production-analytics-sin-fechas', async (req, res) => {
   try {
     const sql = `
       SELECT
-          h.Serie, h.Numero, h.Fecha, h.CodigoOperario, h.OperarioNombre, h.Tipo,
-          h.Gastos1, h.Gastos2, h.Kms1, h.Kms2,
-          hl.CodigoSerie, hl.CodigoNumero, hl.Linea,
-          hl.FechaInicio, hl.HoraInicio, hl.FechaFin, hl.HoraFin,
-          hl.CodigoPuesto, hl.CodigoTarea,
-          hl.ObraSerie, hl.ObraNumero,
-          hl.FabricacionSerie, hl.FabricacionNumero, hl.FabricacionLinea,
-          hl.NumeroManual, hl.CodigoLote, hl.LoteLinea, hl.Modulo,
-          hl.TiempoDedicado, hl.Abierta, hl.TipoTarea
-      FROM hpartes h
-      JOIN hparteslineas hl
-        ON h.Serie = hl.CodigoSerie
-       AND h.Numero = hl.CodigoNumero
-
-      UNION
-
-      SELECT
           p.Serie, p.Numero, p.Fecha, p.CodigoOperario, p.OperarioNombre, p.Tipo,
           p.Gastos1, p.Gastos2, p.Kms1, p.Kms2,
           pl.CodigoSerie, pl.CodigoNumero, pl.Linea,
