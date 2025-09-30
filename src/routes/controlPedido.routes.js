@@ -78,11 +78,7 @@ router.post('/contro-fabrica', async (req, res, next) => {
 // POST /control-pedido/modulos-info
 router.post('/modulos-info', async (req, res) => {
   const modulos = Array.isArray(req.body?.modulos) ? req.body.modulos : [];
-  console.log('[API] modulos-info: Body recibido:', JSON.stringify(req.body));
-  if (!modulos.length) {
-    console.log('[API] modulos-info: Array de modulos vacío');
-    return res.status(400).json({ error: 'Array de modulos vacío' });
-  }
+  if (!modulos.length) return res.status(400).json({ error: 'Array de modulos vacío' });
 
   try {
     // 1) Normaliza y desduplica (Serie/Numero/Linea) de PRESUPUESTO
@@ -97,7 +93,6 @@ router.post('/modulos-info', async (req, res) => {
       const k = key(Serie, Numero, Linea);
       if (!seen.has(k)) { seen.add(k); presuTuplas.push([Serie, Numero, Linea]); }
     }
-    console.log('[API] modulos-info: Tuplas de presupuesto:', presuTuplas);
     if (!presuTuplas.length) return res.json([]);
 
     // 2) Mapea (PRE) -> (FAB) usando fpresupuestoslineas
@@ -115,7 +110,6 @@ router.post('/modulos-info', async (req, res) => {
     `;
     const mapParams = presuTuplas.flat();
     const [rowsMap] = await pool.query(mapSql, mapParams);
-    console.log('[API] modulos-info: Mapeo PRE->FAB:', rowsMap);
 
     // Construye diccionario PRE->FAB
     const pre2fab = new Map(); // key(PRE) -> {FabSerie,FabNumero}
@@ -133,12 +127,9 @@ router.post('/modulos-info', async (req, res) => {
       fabTriples.push([v.FabSerie, v.FabNumero, Number(pLinea)]);
     }
     const fabPairs = Array.from(fabPairsSet).map(s => s.split('|')); // [[Serie,Numero],...]
-    console.log('[API] modulos-info: Pairs FAB:', fabPairs);
-    console.log('[API] modulos-info: Triples FAB:', fabTriples);
 
     // Si no hay mapeos válidos, devolvemos todo false
     if (!fabPairs.length) {
-      console.log('[API] modulos-info: No hay mapeos válidos PRE->FAB');
       return res.json(modulos.map(m => ({ id: m.id ?? `${m.Serie}-${m.Numero}-${m.Linea}`, solape:false, guias:false, cristal:false })));
     }
 
@@ -157,7 +148,6 @@ router.post('/modulos-info', async (req, res) => {
     const guiasParams = fabPairs.flat();
     const [rowsGuias] = await pool.query(guiasSql, guiasParams);
     const haveGuias = new Set(rowsGuias.map(r => `${r.CodigoSerie}|${r.CodigoNumero}`));
-    console.log('[API] modulos-info: Guías encontradas:', Array.from(haveGuias));
 
     // 4.2 Solape (por par Serie/Numero FAB)
     const solapeSql = `
@@ -174,7 +164,6 @@ router.post('/modulos-info', async (req, res) => {
     `;
     const [rowsSolape] = await pool.query(solapeSql, guiasParams);
     const haveSolape = new Set(rowsSolape.map(r => `${r.CodigoSerie}|${r.CodigoNumero}`));
-    console.log('[API] modulos-info: Solape encontrados:', Array.from(haveSolape));
 
     // 4.3 Cristales (por triple Serie/Numero/Linea FAB)
     const triplePlaceholders = fabTriples.map(() => '(?,?,?)').join(',');
@@ -188,7 +177,6 @@ router.post('/modulos-info', async (req, res) => {
     const cristalParams = fabTriples.flat();
     const [rowsCristal] = await pool.query(cristalSql, cristalParams);
     const haveCristal = new Set(rowsCristal.map(r => `${r.CodigoSerie}|${r.CodigoNumero}|${r.Linea}`));
-    console.log('[API] modulos-info: Cristales encontrados:', Array.from(haveCristal));
 
     // 5) Respuesta: para cada módulo de entrada (PRE), marcamos flags según su FAB mapeado
     const out = modulos.map(m => {
@@ -210,13 +198,6 @@ router.post('/modulos-info', async (req, res) => {
       };
     });
 
-    // Log útil
-    const resumen = out.reduce((acc, x) => {
-      acc.total++; if (x.cristal) acc.conCristal++; if (x.guias) acc.conGuias++; if (x.solape) acc.conSolape++; return acc;
-    }, { total:0, conCristal:0, conGuias:0, conSolape:0 });
-
-    console.log(`[API] ✅ modulos-info: ${out.length} módulos ·`, resumen);
-    console.log('[API] modulos-info: Respuesta enviada al frontend:', JSON.stringify(out));
     return res.json(out);
   } catch (error) {
     console.error('[API] ❌ Error modulos-info:', error);
