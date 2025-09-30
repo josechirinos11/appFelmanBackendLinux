@@ -81,11 +81,15 @@ router.post('/modulos-info', async (req, res, next) => {
     return res.status(400).json({ error: 'Array de modulos vacío' });
   }
   
-  console.log(`[API] Consultando info de ${modulos.length} módulos`);
+  console.log(`[API] 📦 Consultando ${modulos.length} módulos`);
+  console.log(`[API] Primeros 3 módulos:`, modulos.slice(0, 3));
   
   try {
     const series = [...new Set(modulos.map(m => m.Serie))];
     const numeros = [...new Set(modulos.map(m => m.Numero))];
+
+    console.log(`[API] Series únicas: ${series.length}`, series.slice(0, 5));
+    console.log(`[API] Números únicos: ${numeros.length}`, numeros.slice(0, 5));
 
     // Consultar guías
     const [guias] = await pool.query(
@@ -99,6 +103,7 @@ router.post('/modulos-info', async (req, res, next) => {
          AND num18 = 2`,
       [series, numeros]
     );
+    console.log(`[API] ✓ Guías encontradas: ${guias.length}`);
 
     // Consultar solape
     const [solapes] = await pool.query(
@@ -115,6 +120,7 @@ router.post('/modulos-info', async (req, res, next) => {
          )))`,
       [series, numeros]
     );
+    console.log(`[API] ✓ Solapes encontrados: ${solapes.length}`);
 
     // Consultar cristales
     const [cristales] = await pool.query(
@@ -125,6 +131,7 @@ router.post('/modulos-info', async (req, res, next) => {
          AND plc.TipoArticulo = 5`,
       [series, numeros]
     );
+    console.log(`[API] ✓ Cristales encontrados: ${cristales.length}`);
 
     // Construir respuesta
     const respuesta = modulos.map(m => {
@@ -146,14 +153,20 @@ router.post('/modulos-info', async (req, res, next) => {
         Linea: m.Linea,
         solape: tieneSolape,
         guias: tieneGuias,
-        cristal: tieneCristal // Boolean, no array
+        cristal: tieneCristal
       };
     });
 
-    console.log(`[API] ✅ Respondiendo con ${respuesta.length} módulos procesados`);
+    // Log de muestra
+    const conInfo = respuesta.filter(r => r.solape || r.guias || r.cristal);
+    console.log(`[API] 📊 Módulos con info: ${conInfo.length}/${respuesta.length}`);
+    if (conInfo.length > 0) {
+      console.log(`[API] Ejemplo:`, conInfo[0]);
+    }
+
     res.json(respuesta);
   } catch (error) {
-    console.error('[API] ❌ Error en modulos-info:', error);
+    console.error('[API] ❌ Error:', error);
     next(error);
   }
 });
