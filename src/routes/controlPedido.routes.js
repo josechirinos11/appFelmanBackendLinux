@@ -185,31 +185,37 @@ router.post('/modulos-info', async (req, res) => {
     const haveCristal = new Set(rowsCristal.map(r => `${r.CodigoSerie}|${r.CodigoNumero}|${r.Linea}`));
 
     // 5) Respuesta: para cada módulo de entrada (PRE), marcamos flags según su FAB mapeado
-    const out = modulos.map(m => {
-      const Serie = String(m.Serie ?? m.serie ?? '').trim();
-      const Numero = Number(m.Numero ?? m.numero ?? m.Num ?? m.num);
-      const Linea = Number(m.Linea ?? m.linea);
+ // ... tras construir haveSolape, haveGuias, haveCristal
 
-      const fab = pre2fab.get(key(Serie, Numero, Linea));
-      if (!fab) {
-        // sin mapeo: devolvemos id con la tupla recibida
-        const id = m.id ?? `${Serie}-${Numero}-${Linea}`;
-        return { id, solape: false, guias: false, cristal: false };
-      }
+const out = modulos.map(m => {
+  const Serie = String(m.Serie ?? m.serie ?? '').trim();
+  const Numero = Number(m.Numero ?? m.numero ?? m.Num ?? m.num);
+  const Linea  = Number(m.Linea  ?? m.linea);
 
-      // ➜ IMPORTANTE: el id debe ser FAB para que encaje con el front
-      const id = `${fab.FabSerie}-${fab.FabNumero}-${Linea}`;
+  // id PRE (tal como lo recibiste)
+  const preId = `${Serie}-${Numero}-${Linea}`;
 
-      const pairK = `${fab.FabSerie}|${fab.FabNumero}`;
-      const tripK = `${fab.FabSerie}|${fab.FabNumero}|${Linea}`;
+  const fab = pre2fab.get(key(Serie, Numero, Linea));
+  if (!fab) {
+    // sin mapeo: devuelves lo mismo y alias vacío
+    return { id: preId, alias: [preId], solape:false, guias:false, cristal:false };
+  }
 
-      return {
-        id,
-        solape: haveSolape.has(pairK),
-        guias: haveGuias.has(pairK),
-        cristal: haveCristal.has(tripK)
-      };
-    });
+  // id FAB canónico
+  const fabId = `${fab.FabSerie}-${fab.FabNumero}-${Linea}`;
+
+  const pairK = `${fab.FabSerie}|${fab.FabNumero}`;
+  const tripK = `${fab.FabSerie}|${fab.FabNumero}|${Linea}`;
+
+  return {
+    id: fabId,                 // canónico: FAB
+    alias: [fabId, preId],     // incluye PRE para casar con el front
+    solape:  haveSolape.has(pairK),
+    guias:   haveGuias.has(pairK),
+    cristal: haveCristal.has(tripK)
+  };
+});
+
 
     return res.json(out);
   } catch (error) {
