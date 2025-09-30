@@ -78,8 +78,10 @@ router.post('/contro-fabrica', async (req, res, next) => {
 router.post('/modulos-info', async (req, res, next) => {
   const modulos = Array.isArray(req.body.modulos) ? req.body.modulos : [];
   if (!modulos.length) {
-    return res.status(400).json({ error: 'Debes enviar un array de modulos' });
+    return res.status(400).json({ error: 'Array de modulos vacío' });
   }
+  
+  console.log(`[API] Consultando info de ${modulos.length} módulos`);
   
   try {
     const series = [...new Set(modulos.map(m => m.Serie))];
@@ -116,9 +118,8 @@ router.post('/modulos-info', async (req, res, next) => {
 
     // Consultar cristales
     const [cristales] = await pool.query(
-      `SELECT plc.CodigoSerie, plc.CodigoNumero, plc.Linea, a.Descripcion 
+      `SELECT plc.CodigoSerie, plc.CodigoNumero, plc.Linea 
        FROM fPresupuestosLineasComponentes plc
-       JOIN Articulos a ON a.Codigo = plc.CodigoArticulo
        WHERE plc.CodigoSerie IN (?) 
          AND plc.CodigoNumero IN (?) 
          AND plc.TipoArticulo = 5`,
@@ -133,13 +134,11 @@ router.post('/modulos-info', async (req, res, next) => {
       const tieneSolape = solapes.some(s => 
         s.CodigoSerie === m.Serie && s.CodigoNumero === m.Numero
       );
-      const listaCristales = cristales
-        .filter(c => 
-          c.CodigoSerie === m.Serie && 
-          c.CodigoNumero === m.Numero && 
-          c.Linea === m.Linea
-        )
-        .map(c => c.Descripcion);
+      const tieneCristal = cristales.some(c => 
+        c.CodigoSerie === m.Serie && 
+        c.CodigoNumero === m.Numero && 
+        c.Linea === m.Linea
+      );
 
       return {
         Serie: m.Serie,
@@ -147,12 +146,14 @@ router.post('/modulos-info', async (req, res, next) => {
         Linea: m.Linea,
         solape: tieneSolape,
         guias: tieneGuias,
-        cristal: listaCristales.length > 0
+        cristal: tieneCristal // Boolean, no array
       };
     });
 
+    console.log(`[API] ✅ Respondiendo con ${respuesta.length} módulos procesados`);
     res.json(respuesta);
   } catch (error) {
+    console.error('[API] ❌ Error en modulos-info:', error);
     next(error);
   }
 });
