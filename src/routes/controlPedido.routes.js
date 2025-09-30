@@ -78,30 +78,7 @@ router.post('/contro-fabrica', async (req, res, next) => {
 router.post('/modulos-info', async (req, res, next) => {
   const modulos = Array.isArray(req.body.modulos) ? req.body.modulos : [];
 
-    // LOG CRÍTICO: Ver qué llega
-  console.log('[API] 🔍 Primeros 5 módulos recibidos:', 
-    modulos.slice(0, 5).map(m => `${m.Serie}-${m.Numero}-${m.Linea}`)
-  );
   
-  try {
-    const series = [...new Set(modulos.map(m => m.Serie))];
-    const numeros = [...new Set(modulos.map(m => m.Numero))];
-
-    console.log('[API] 🔍 Series a buscar:', series.slice(0, 10));
-    console.log('[API] 🔍 Números a buscar:', numeros.slice(0, 10));
-
-    // Verificar si existe ALGÚN dato con estas series
-    const [test] = await pool.query(
-      `SELECT DISTINCT CodigoSerie, CodigoNumero 
-       FROM fpresupuestosArticulos 
-       WHERE CodigoSerie IN (?) 
-       LIMIT 10`,
-      [series]
-    );
-    console.log('[API] 🔍 Registros encontrados en fpresupuestosArticulos:', test.length);
-    if (test.length > 0) {
-      console.log('[API] 🔍 Ejemplo:', test[0]);
-    }
 
 
   if (!modulos.length) {
@@ -196,11 +173,6 @@ router.post('/modulos-info', async (req, res, next) => {
     console.error('[API] ❌ Error:', error);
     next(error);
   }
-
-   } catch (error) {
-    console.error('[API] ❌ Error en verificación MODULOS-INFO:', error);
-    next(error);
-   }
 });
 
 module.exports = router;
