@@ -88,7 +88,7 @@ router.post('/modulos-info', async (req, res) => {
     for (const m of modulos) {
       const Serie = String(m.Serie ?? m.serie ?? '').trim();
       const Numero = Number(m.Numero ?? m.numero ?? m.Num ?? m.num);
-      const Linea  = Number(m.Linea  ?? m.linea);
+      const Linea = Number(m.Linea ?? m.linea);
       if (!Serie || !Number.isFinite(Numero) || !Number.isFinite(Linea)) continue;
       const k = key(Serie, Numero, Linea);
       if (!seen.has(k)) { seen.add(k); presuTuplas.push([Serie, Numero, Linea]); }
@@ -112,9 +112,15 @@ router.post('/modulos-info', async (req, res) => {
     const [rowsMap] = await pool.query(mapSql, mapParams);
 
     // Construye diccionario PRE->FAB
-    const pre2fab = new Map(); // key(PRE) -> {FabSerie,FabNumero}
+    const pre2fab = new Map();
     for (const r of rowsMap) {
       pre2fab.set(key(r.PresupSerie, r.PresupNumero, r.Linea), { FabSerie: r.FabSerie, FabNumero: r.FabNumero });
+    }
+    // ➜ NUEVO: si no hay mapeos, asumimos que las tuplas de entrada YA son FAB
+    if (rowsMap.length === 0) {
+      for (const [Serie, Numero, Linea] of presuTuplas) {
+        pre2fab.set(key(Serie, Numero, Linea), { FabSerie: Serie, FabNumero: Numero });
+      }
     }
 
     // 3) Prepara tuplas de FABRICACIÓN (para artículos por Serie/Numero y cristales por Serie/Numero/Linea)
@@ -130,7 +136,7 @@ router.post('/modulos-info', async (req, res) => {
 
     // Si no hay mapeos válidos, devolvemos todo false
     if (!fabPairs.length) {
-      return res.json(modulos.map(m => ({ id: m.id ?? `${m.Serie}-${m.Numero}-${m.Linea}`, solape:false, guias:false, cristal:false })));
+      return res.json(modulos.map(m => ({ id: m.id ?? `${m.Serie}-${m.Numero}-${m.Linea}`, solape: false, guias: false, cristal: false })));
     }
 
     // 4) Consultas calificadas a z_felman2023 (BOOLEANS como =1)
@@ -182,18 +188,25 @@ router.post('/modulos-info', async (req, res) => {
     const out = modulos.map(m => {
       const Serie = String(m.Serie ?? m.serie ?? '').trim();
       const Numero = Number(m.Numero ?? m.numero ?? m.Num ?? m.num);
-      const Linea  = Number(m.Linea  ?? m.linea);
-      const id = m.id ?? `${Serie}-${Numero}-${Linea}`;
+      const Linea = Number(m.Linea ?? m.linea);
 
       const fab = pre2fab.get(key(Serie, Numero, Linea));
-      if (!fab) return { id, solape: false, guias: false, cristal: false };
+      if (!fab) {
+        // sin mapeo: devolvemos id con la tupla recibida
+        const id = m.id ?? `${Serie}-${Numero}-${Linea}`;
+        return { id, solape: false, guias: false, cristal: false };
+      }
+
+      // ➜ IMPORTANTE: el id debe ser FAB para que encaje con el front
+      const id = `${fab.FabSerie}-${fab.FabNumero}-${Linea}`;
 
       const pairK = `${fab.FabSerie}|${fab.FabNumero}`;
       const tripK = `${fab.FabSerie}|${fab.FabNumero}|${Linea}`;
+
       return {
         id,
-        solape:  haveSolape.has(pairK),
-        guias:   haveGuias.has(pairK),
+        solape: haveSolape.has(pairK),
+        guias: haveGuias.has(pairK),
         cristal: haveCristal.has(tripK)
       };
     });
