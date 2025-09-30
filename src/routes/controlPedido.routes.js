@@ -72,6 +72,91 @@ router.post('/contro-fabrica', async (req, res, next) => {
   }
 });
 
+
+
+// POST /control-pedido/modulos-info (corregir nombre)
+router.post('/modulos-info', async (req, res, next) => {
+  const modulos = Array.isArray(req.body.modulos) ? req.body.modulos : [];
+  if (!modulos.length) {
+    return res.status(400).json({ error: 'Debes enviar un array de modulos' });
+  }
+  
+  try {
+    const series = [...new Set(modulos.map(m => m.Serie))];
+    const numeros = [...new Set(modulos.map(m => m.Numero))];
+
+    // Consultar guías
+    const [guias] = await pool.query(
+      `SELECT CodigoSerie, CodigoNumero 
+       FROM fpresupuestosArticulos 
+       WHERE CodigoSerie IN (?) 
+         AND CodigoNumero IN (?) 
+         AND Tipo = 1 
+         AND Log01 = TRUE 
+         AND Log04 = TRUE 
+         AND num18 = 2`,
+      [series, numeros]
+    );
+
+    // Consultar solape
+    const [solapes] = await pool.query(
+      `SELECT CodigoSerie, CodigoNumero 
+       FROM fpresupuestosArticulos 
+       WHERE CodigoSerie IN (?) 
+         AND CodigoNumero IN (?) 
+         AND Tipo = 1 
+         AND Log01 = TRUE 
+         AND Log04 = TRUE 
+         AND (num15 = 11 OR (num15 = 5 AND CodigoArticulo IN (
+           'VEK109014','VEK109014REC','VEK109132',
+           'VEK109208','VEK109295','VEK109597'
+         )))`,
+      [series, numeros]
+    );
+
+    // Consultar cristales
+    const [cristales] = await pool.query(
+      `SELECT plc.CodigoSerie, plc.CodigoNumero, plc.Linea, a.Descripcion 
+       FROM fPresupuestosLineasComponentes plc
+       JOIN Articulos a ON a.Codigo = plc.CodigoArticulo
+       WHERE plc.CodigoSerie IN (?) 
+         AND plc.CodigoNumero IN (?) 
+         AND plc.TipoArticulo = 5`,
+      [series, numeros]
+    );
+
+    // Construir respuesta
+    const respuesta = modulos.map(m => {
+      const tieneGuias = guias.some(g => 
+        g.CodigoSerie === m.Serie && g.CodigoNumero === m.Numero
+      );
+      const tieneSolape = solapes.some(s => 
+        s.CodigoSerie === m.Serie && s.CodigoNumero === m.Numero
+      );
+      const listaCristales = cristales
+        .filter(c => 
+          c.CodigoSerie === m.Serie && 
+          c.CodigoNumero === m.Numero && 
+          c.Linea === m.Linea
+        )
+        .map(c => c.Descripcion);
+
+      return {
+        Serie: m.Serie,
+        Numero: m.Numero,
+        Linea: m.Linea,
+        solape: tieneSolape,
+        guias: tieneGuias,
+        cristal: listaCristales.length > 0
+      };
+    });
+
+    res.json(respuesta);
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;
 
 
