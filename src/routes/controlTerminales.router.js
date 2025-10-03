@@ -483,26 +483,15 @@ router.get('/pedidos-en-fabrica', async (req, res) => {
   try {
     const sql = `
       SELECT
-          p.Serie, p.Numero, p.Fecha, 
-          p.CodigoOperario, p.OperarioNombre,
-          pl.CodigoSerie, pl.CodigoNumero, pl.Linea,
-          pl.FechaInicio, pl.HoraInicio, 
-          pl.FechaFin, pl.HoraFin,
-          pl.CodigoPuesto, pl.CodigoTarea,
-          pl.FabricacionSerie, 
-          pl.FabricacionNumero, 
-          pl.FabricacionLinea,
-          pl.NumeroManual, 
-          pl.Modulo,
-          pl.TiempoDedicado, 
-          pl.Abierta
-      FROM partes p
-      JOIN parteslineas pl
-        ON p.Serie = pl.CodigoSerie
-       AND p.Numero = pl.CodigoNumero
-      WHERE pl.NumeroManual IS NOT NULL
-        AND pl.NumeroManual != ''
-      ORDER BY p.Fecha DESC, pl.FechaInicio DESC;
+        l.Codigo, l.NumeroManual, l.FechaRealInicio, l.Descripcion,
+        ll.OrigenSerie, ll.OrigenNumero, ll.Linea,
+        ll.DatosFabricacion, ll.FabricacionNumeroManual, ll.Cliente, ll.Modulo
+      FROM lotes l
+      JOIN loteslineas ll
+        ON l.Codigo = ll.CodigoLote
+      WHERE ll.FabricacionNumeroManual IS NOT NULL
+        AND ll.FabricacionNumeroManual != ''
+      ORDER BY l.FechaRealInicio DESC;
     `;
 
     const [rows] = await pool.execute(sql);
