@@ -485,7 +485,7 @@ router.get('/pedidos-en-fabrica', async (req, res) => {
       SELECT
         l.Codigo, l.NumeroManual, l.FechaRealInicio, l.Descripcion,
         ll.OrigenSerie, ll.OrigenNumero, ll.Linea,
-        ll.DatosFabricacion, ll.FabricacionNumeroManual, ll.Cliente, ll.Modulo
+        ll.DatosFabricacion, ll.FabricacionNumeroManual, ll.Cliente, ll.Modulo, ll.Descripcion AS LineaDescripcion
       FROM lotes l
       JOIN loteslineas ll
         ON l.Codigo = ll.CodigoLote
