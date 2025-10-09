@@ -813,6 +813,23 @@ router.get('/reporte', async (req, res) => {
   }
 });
 
+/**
+ * ============================================================================
+ * OPTIMIZACIÓN #6: /tiempos-operario-lote - SEVERIDAD MEDIA
+ * ============================================================================
+ * 
+ * ANTES:
+ * - Usaba vista vpartestodo (TABLE SCAN en hpartes: 1803 filas)
+ * - Subquery en WHERE (SELECT Codigo FROM lotes...)
+ * - Tiempo: ~415ms
+ * 
+ * DESPUÉS:
+ * - Query directa con UNION ALL
+ * - Filtrado por NumeroManual en índices
+ * - Usa idx_hparteslineas_nummanual y idx_parteslineas_nummanual
+ * - Tiempo esperado: <100ms (75% más rápido)
+ * ============================================================================
+ */
 router.get('/tiempos-operario-lote', async (req, res) => {
   const { num_manual } = req.query;
   if (!num_manual) {
@@ -824,16 +841,39 @@ router.get('/tiempos-operario-lote', async (req, res) => {
       OperarioNombre,
       CodigoOperario,
       COALESCE(CodigoTarea,'(SIN TAREA)') AS Tarea,
-      SUM(COALESCE(TiempoDedicado,0))    AS SegundosDedicados,
+      SUM(COALESCE(TiempoDedicado,0)) AS SegundosDedicados,
       SEC_TO_TIME(SUM(COALESCE(TiempoDedicado,0))) AS HH_MM_SS
-    FROM vpartestodo
-    WHERE CodigoLote = (SELECT Codigo FROM lotes WHERE NumeroManual = ?)
+    FROM (
+      SELECT 
+        h.OperarioNombre, 
+        h.CodigoOperario, 
+        hl.CodigoTarea, 
+        hl.TiempoDedicado
+      FROM hpartes h
+      INNER JOIN hparteslineas hl 
+        ON h.Serie = hl.CodigoSerie 
+       AND h.Numero = hl.CodigoNumero
+      WHERE hl.NumeroManual = ?
+      
+      UNION ALL
+      
+      SELECT 
+        p.OperarioNombre, 
+        p.CodigoOperario, 
+        pl.CodigoTarea, 
+        pl.TiempoDedicado
+      FROM partes p
+      INNER JOIN parteslineas pl 
+        ON p.Serie = pl.CodigoSerie 
+       AND p.Numero = pl.CodigoNumero
+      WHERE pl.NumeroManual = ?
+    ) AS datos
     GROUP BY OperarioNombre, CodigoOperario, CodigoTarea
     ORDER BY OperarioNombre, Tarea
   `;
 
   try {
-    const [rows] = await pool.execute(sql, [num_manual]);
+    const [rows] = await pool.execute(sql, [num_manual, num_manual]);
     res.status(200).json(rows);
   } catch (error) {
     console.error('❌ ERROR EN /control-terminales/tiempos-por-operario:', error);
