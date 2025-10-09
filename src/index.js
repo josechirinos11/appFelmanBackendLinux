@@ -12,7 +12,7 @@ const SocketIO = require('./sockets/config/socket.config');
 const controlPedidoRoutes = require('./routes/controlPedido.routes.js');
 const socketRoutes = require('./sockets/routes/socket.routes');
 const controlAccessRoutes = require('./routes/controlAccess.routes.js');
-const controlTerminalesRoutes = require('./routes/controlTerminales.router');
+const controlTerminalesRoutes = require('./routes/controlTerminalesModificado.router');
 const controlAlmacenRoutes= require('./routes/controlAlmacen.router.js');
 const controlOptimaRoutes= require('./routes/controlOptima.routes.js');
 
