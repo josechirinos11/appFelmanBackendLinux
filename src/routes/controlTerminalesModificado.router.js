@@ -362,7 +362,7 @@ router.get("/tiempos-acumulados-modulo", async (req, res) => {
  * - pedido: string (opcional, filtra por NumeroManual)
  * ============================================================================
  */
-router.get('/tiempo-real-nueva', async (req, res) => {
+router.get('/tiempo-real-nueva2', async (req, res) => {
   console.log('PETICION para tiempo-real-nueva TERMINALES');
   
   try {
@@ -427,6 +427,100 @@ router.get('/tiempo-real-nueva', async (req, res) => {
       porTarea: {},
       porPedido: {},
       abiertas: rows.filter(r => r.Abierta === 1).length
+    };
+
+    // Agrupar por operador
+    rows.forEach(row => {
+      const op = row.OperarioNombre || 'Sin operario';
+      const tar = row.CodigoTarea || 'Sin tarea';
+      const ped = row.NumeroManual || 'Sin pedido';
+
+      stats.porOperador[op] = (stats.porOperador[op] || 0) + 1;
+      stats.porTarea[tar] = (stats.porTarea[tar] || 0) + 1;
+      stats.porPedido[ped] = (stats.porPedido[ped] || 0) + 1;
+    });
+
+    res.status(200).json({
+      data: rows,
+      stats: stats
+    });
+  } catch (error) {
+    console.error('❌ ERROR EN /control-terminales/tiempo-real-nueva:', error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+router.get('/tiempo-real-nueva', async (req, res) => {
+  console.log('PETICION para tiempo-real-nueva TERMINALES');
+  
+  try {
+    const { operador, tarea, pedido, fecha } = req.query; // ← AGREGAR fecha
+
+    // 🧪 Determinar qué fecha usar
+    const fechaQuery = fecha ? `'${fecha}'` : 'CURDATE()';
+    
+    // Construir condiciones WHERE adicionales
+    let additionalWhere = '';
+    let params = [];
+
+    if (operador) {
+      additionalWhere += ' AND h.OperarioNombre LIKE ?';
+      params.push(`%${operador}%`);
+    }
+    if (tarea) {
+      additionalWhere += ' AND hl.CodigoTarea = ?';
+      params.push(tarea);
+    }
+    if (pedido) {
+      additionalWhere += ' AND hl.NumeroManual LIKE ?';
+      params.push(`%${pedido}%`);
+    }
+
+    const sql = `
+      SELECT
+          h.Serie, h.Numero, h.Fecha, h.CodigoOperario, h.OperarioNombre,
+          hl.CodigoSerie, hl.CodigoNumero, hl.Linea,
+          hl.FechaInicio, hl.HoraInicio, hl.FechaFin, hl.HoraFin,
+          hl.CodigoTarea, hl.NumeroManual, hl.Modulo,
+          hl.TiempoDedicado, hl.Abierta
+      FROM hpartes h
+      INNER JOIN hparteslineas hl
+        ON h.Serie = hl.CodigoSerie
+       AND h.Numero = hl.CodigoNumero
+      WHERE h.Fecha = ${fechaQuery}${additionalWhere}
+
+      UNION ALL
+
+      SELECT
+          p.Serie, p.Numero, p.Fecha, p.CodigoOperario, p.OperarioNombre,
+          pl.CodigoSerie, pl.CodigoNumero, pl.Linea,
+          pl.FechaInicio, pl.HoraInicio, pl.FechaFin, pl.HoraFin,
+          pl.CodigoTarea, pl.NumeroManual, pl.Modulo,
+          pl.TiempoDedicado, pl.Abierta
+      FROM partes p
+      INNER JOIN parteslineas pl
+        ON p.Serie = pl.CodigoSerie
+       AND p.Numero = pl.CodigoNumero
+      WHERE p.Fecha = ${fechaQuery}${additionalWhere.replace(/h\./g, 'p.').replace(/hl\./g, 'pl.')}
+
+      ORDER BY FechaInicio DESC, HoraInicio DESC
+    `;
+
+    // Duplicar params para la segunda parte del UNION
+    const allParams = [...params, ...params];
+    
+    const [rows] = await pool.execute(sql, allParams);
+    
+    // Calcular estadísticas en el backend
+    const stats = {
+      total: rows.length,
+      porOperador: {},
+      porTarea: {},
+      porPedido: {},
+      abiertas: rows.filter(r => r.Abierta === 1).length,
+      operadoresUnicos: new Set(rows.map(r => r.OperarioNombre)).size,
+      tareasUnicas: new Set(rows.map(r => r.CodigoTarea)).size,
+      pedidosUnicos: new Set(rows.map(r => r.NumeroManual)).size
     };
 
     // Agrupar por operador
