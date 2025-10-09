@@ -30,7 +30,7 @@ const app = express();
 
 
 //INICIACION MODULO WEDSOCKET
-// const server = http.createServer(app);
+ const server = http.createServer(app);
 // // Inicializar Socket.IO
 // const socketIO = new SocketIO(server);
 // // Inicializar manejadores de eventos
