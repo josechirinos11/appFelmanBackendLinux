@@ -30,13 +30,13 @@ const app = express();
 
 
 //INICIACION MODULO WEDSOCKET
-const server = http.createServer(app);
-// Inicializar Socket.IO
-const socketIO = new SocketIO(server);
-// Inicializar manejadores de eventos
-const SocketHandlers = require('./sockets');
-const socketHandlers = new SocketHandlers(socketIO);
-global.socketHandlers = socketHandlers; // Hacer accesible en toda la aplicación
+// const server = http.createServer(app);
+// // Inicializar Socket.IO
+// const socketIO = new SocketIO(server);
+// // Inicializar manejadores de eventos
+// const SocketHandlers = require('./sockets');
+// const socketHandlers = new SocketHandlers(socketIO);
+// global.socketHandlers = socketHandlers; // Hacer accesible en toda la aplicación
 //FIN INICIACION MODULO WEDSOCKET
 
 
