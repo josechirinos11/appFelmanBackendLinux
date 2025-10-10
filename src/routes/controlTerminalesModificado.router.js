@@ -572,12 +572,16 @@ router.get('/production-analytics', async (req, res) => {
   }
 
   try {
-    // ✅ SOLUCIÓN DEFINITIVA: Comparar fechas >= start y <= end
-    // Esto captura TODO el día completo sin problemas de zona horaria
+    // ✅ SOLUCIÓN DEFINITIVA: Forzar zona horaria en SELECT
+    // Convierte fechas a hora local ANTES de enviar al frontend
     const sql = `
       SELECT
-          h.Fecha, h.CodigoOperario, h.OperarioNombre,
-          hl.FechaInicio, hl.HoraInicio, hl.FechaFin, hl.HoraFin,
+          CONVERT_TZ(h.Fecha, '+00:00', '+02:00') AS Fecha,
+          h.CodigoOperario, h.OperarioNombre,
+          CONVERT_TZ(hl.FechaInicio, '+00:00', '+02:00') AS FechaInicio,
+          hl.HoraInicio,
+          CONVERT_TZ(hl.FechaFin, '+00:00', '+02:00') AS FechaFin,
+          hl.HoraFin,
           hl.CodigoTarea, hl.NumeroManual, hl.Modulo,
           hl.TiempoDedicado, hl.Abierta
       FROM hpartes h
@@ -591,8 +595,12 @@ router.get('/production-analytics', async (req, res) => {
       UNION ALL
 
       SELECT
-          p.Fecha, p.CodigoOperario, p.OperarioNombre,
-          pl.FechaInicio, pl.HoraInicio, pl.FechaFin, pl.HoraFin,
+          CONVERT_TZ(p.Fecha, '+00:00', '+02:00') AS Fecha,
+          p.CodigoOperario, p.OperarioNombre,
+          CONVERT_TZ(pl.FechaInicio, '+00:00', '+02:00') AS FechaInicio,
+          pl.HoraInicio,
+          CONVERT_TZ(pl.FechaFin, '+00:00', '+02:00') AS FechaFin,
+          pl.HoraFin,
           pl.CodigoTarea, pl.NumeroManual, pl.Modulo,
           pl.TiempoDedicado, pl.Abierta
       FROM partes p
