@@ -558,6 +558,7 @@ router.get('/tiempo-real-nueva', async (req, res) => {
  * - Limitar histórico (últimos 90 días)
  * - Paginación obligatoria
  * verificar que los filtros de fecha funcionan correctamente
+ * otros cambios mas pequeños
  * ============================================================================
  */
 router.get('/production-analytics', async (req, res) => {
