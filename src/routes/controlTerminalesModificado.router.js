@@ -557,6 +557,7 @@ router.get('/tiempo-real-nueva', async (req, res) => {
  * - Solo SELECT de columnas necesarias
  * - Limitar histórico (últimos 90 días)
  * - Paginación obligatoria
+ * verificar que los filtros de fecha funcionan correctamente
  * ============================================================================
  */
 router.get('/production-analytics', async (req, res) => {
