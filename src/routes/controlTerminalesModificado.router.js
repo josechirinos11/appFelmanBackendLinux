@@ -570,8 +570,8 @@ router.get('/production-analytics', async (req, res) => {
   }
 
   try {
-    // ✅ SOLUCIÓN: Usar DATE() para comparar solo la parte de fecha
-    // Esto ignora la hora y zona horaria, capturando todo el día
+    // ✅ SOLUCIÓN DEFINITIVA: Comparar fechas >= start y <= end
+    // Esto captura TODO el día completo sin problemas de zona horaria
     const sql = `
       SELECT
           h.Fecha, h.CodigoOperario, h.OperarioNombre,
@@ -582,7 +582,8 @@ router.get('/production-analytics', async (req, res) => {
       INNER JOIN hparteslineas hl
         ON h.Serie = hl.CodigoSerie
        AND h.Numero = hl.CodigoNumero
-      WHERE DATE(h.Fecha) BETWEEN ? AND ?
+      WHERE DATE(h.Fecha) >= DATE(?)
+        AND DATE(h.Fecha) <= DATE(?)
         AND h.Fecha >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
 
       UNION ALL
@@ -596,7 +597,8 @@ router.get('/production-analytics', async (req, res) => {
       INNER JOIN parteslineas pl
         ON p.Serie = pl.CodigoSerie
        AND p.Numero = pl.CodigoNumero
-      WHERE DATE(p.Fecha) BETWEEN ? AND ?
+      WHERE DATE(p.Fecha) >= DATE(?)
+        AND DATE(p.Fecha) <= DATE(?)
         AND p.Fecha >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
 
       ORDER BY FechaInicio DESC, HoraInicio DESC

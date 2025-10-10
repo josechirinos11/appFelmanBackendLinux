@@ -22,7 +22,8 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME_TERMINALES,
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
+  timezone: '+02:00' // ✅ Zona horaria de España (GMT+2 en verano, GMT+1 en invierno)
 });
 
 module.exports = pool; 
