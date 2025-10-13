@@ -264,14 +264,13 @@ router.post('/info-para-terminales', async (req, res, next) => {
 
     const clienteNombre = clienteRows[0].ClienteNombre;
 
-    // 2. Obtener Serie1Desc, CodigoSerie, CodigoNumero de fpresupuestoslineas
-    const placeholders = modulosArray.map(() => '?').join(',');
+    // 2. Obtener Serie1Desc, CodigoSerie, CodigoNumero de fpresupuestoslineas (TODOS los módulos del presupuesto)
     const [lineasRows] = await pool.execute(
       `SELECT Serie1Desc, CodigoSerie, CodigoNumero, Modulo
        FROM z_felman2023.fpresupuestoslineas 
-       WHERE PresupNumMan = ? 
-       AND Modulo IN (${placeholders})`,
-      [codigoPresupuesto, ...modulosArray]
+       WHERE PresupNumMan = ?
+       ORDER BY Modulo`,
+      [codigoPresupuesto]
     );
 
     // 3. Preparar respuesta
