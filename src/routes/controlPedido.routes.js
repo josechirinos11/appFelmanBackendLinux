@@ -264,11 +264,11 @@ router.post('/info-para-terminales', async (req, res, next) => {
 
     const clienteNombre = clienteRows[0].ClienteNombre;
 
-    // 2. Obtener Serie1Desc, CodigoSerie, CodigoNumero de fpresupuestolineas
+    // 2. Obtener Serie1Desc, CodigoSerie, CodigoNumero de fpresupuestoslineas
     const placeholders = modulosArray.map(() => '?').join(',');
     const [lineasRows] = await pool.execute(
       `SELECT Serie1Desc, CodigoSerie, CodigoNumero, Modulo
-       FROM fpresupuestolineas 
+       FROM z_felman2023.fpresupuestoslineas 
        WHERE PresupNumMan = ? 
        AND Modulo IN (${placeholders})`,
       [codigoPresupuesto, ...modulosArray]
