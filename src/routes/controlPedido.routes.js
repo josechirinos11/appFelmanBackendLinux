@@ -226,7 +226,7 @@ const out = modulos.map(m => {
 
 // Ruta para obtener información para terminales verificacion de cambioscc
 router.post('/info-para-terminales', async (req, res, next) => {
-  const { codigoPresupuesto, modulos } = req.body;
+  const { codigoPresupuesto } = req.body;
   
   // Validar parámetros
   if (!codigoPresupuesto) {
@@ -235,18 +235,8 @@ router.post('/info-para-terminales', async (req, res, next) => {
       message: 'Falta el parámetro codigoPresupuesto' 
     });
   }
-  
-  if (!modulos || (Array.isArray(modulos) && modulos.length === 0)) {
-    return res.status(400).json({ 
-      status: 'error', 
-      message: 'Falta el parámetro modulos o está vacío' 
-    });
-  }
 
   try {
-    // Convertir modulos a array si es un solo valor
-    const modulosArray = Array.isArray(modulos) ? modulos : [modulos];
-    
     // 1. Obtener ClienteNombre de fpresupuestos
     const [clienteRows] = await pool.execute(
       `SELECT ClienteNombre 
