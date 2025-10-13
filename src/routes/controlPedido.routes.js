@@ -247,10 +247,10 @@ router.post('/info-para-terminales', async (req, res, next) => {
     // Convertir modulos a array si es un solo valor
     const modulosArray = Array.isArray(modulos) ? modulos : [modulos];
     
-    // 1. Obtener ClienteNombre de fpresupuesto
+    // 1. Obtener ClienteNombre de fpresupuestos
     const [clienteRows] = await pool.execute(
       `SELECT ClienteNombre 
-       FROM fpresupuesto 
+       FROM z_felman2023.fpresupuestos 
        WHERE NumeroManual = ?`,
       [codigoPresupuesto]
     );
