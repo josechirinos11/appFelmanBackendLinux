@@ -224,7 +224,7 @@ const out = modulos.map(m => {
   }
 });
 
-// Ruta para obtener información para terminales
+// Ruta para obtener información para terminales verificacion de cambioscc
 router.post('/info-para-terminales', async (req, res, next) => {
   const { codigoPresupuesto, modulos } = req.body;
   

@@ -321,7 +321,7 @@ router.get('/tiempo-real', async (req, res) => {
   }
 });
 
-
+//sin camnios aun
 router.get('/tiempo-real-nueva', async (req, res) => {
   console.log('PETICION para tiempo-real TERMINALES');
   try {
