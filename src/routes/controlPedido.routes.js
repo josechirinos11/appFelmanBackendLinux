@@ -224,6 +224,76 @@ const out = modulos.map(m => {
   }
 });
 
+// Ruta para obtener información para terminales
+router.post('/info-para-terminales', async (req, res, next) => {
+  const { codigoPresupuesto, modulos } = req.body;
+  
+  // Validar parámetros
+  if (!codigoPresupuesto) {
+    return res.status(400).json({ 
+      status: 'error', 
+      message: 'Falta el parámetro codigoPresupuesto' 
+    });
+  }
+  
+  if (!modulos || (Array.isArray(modulos) && modulos.length === 0)) {
+    return res.status(400).json({ 
+      status: 'error', 
+      message: 'Falta el parámetro modulos o está vacío' 
+    });
+  }
+
+  try {
+    // Convertir modulos a array si es un solo valor
+    const modulosArray = Array.isArray(modulos) ? modulos : [modulos];
+    
+    // 1. Obtener ClienteNombre de fpresupuesto
+    const [clienteRows] = await pool.execute(
+      `SELECT ClienteNombre 
+       FROM fpresupuesto 
+       WHERE NumeroManual = ?`,
+      [codigoPresupuesto]
+    );
+
+    if (clienteRows.length === 0) {
+      return res.status(404).json({ 
+        status: 'error', 
+        message: 'No se encontró el presupuesto con el código proporcionado' 
+      });
+    }
+
+    const clienteNombre = clienteRows[0].ClienteNombre;
+
+    // 2. Obtener Serie1Desc, CodigoSerie, CodigoNumero de fpresupuestolineas
+    const placeholders = modulosArray.map(() => '?').join(',');
+    const [lineasRows] = await pool.execute(
+      `SELECT Serie1Desc, CodigoSerie, CodigoNumero, Modulo
+       FROM fpresupuestolineas 
+       WHERE PresupNumMan = ? 
+       AND Modulo IN (${placeholders})`,
+      [codigoPresupuesto, ...modulosArray]
+    );
+
+    // 3. Preparar respuesta
+    const response = {
+      status: 'ok',
+      codigoPresupuesto,
+      clienteNombre,
+      modulos: lineasRows
+    };
+
+    return res.status(200).json(response);
+    
+  } catch (error) {
+    console.error('❌ ERROR EN /info-para-terminales:', error);
+    return res.status(500).json({ 
+      status: 'error', 
+      message: 'Error al consultar la información', 
+      detail: error.message 
+    });
+  }
+});
+
 
 module.exports = router;
 
