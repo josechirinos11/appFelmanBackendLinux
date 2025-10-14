@@ -347,7 +347,182 @@ router.post('/consulta', async (req, res) => {
   }
 });
 
+/**
+ * POST /control-pedido/consultaMAYOR
+ * Ejecuta múltiples consultas SQL en secuencia con parámetros dinámicos.
+ * Permite replicar la lógica de cualquier ruta existente desde el frontend.
+ * 
+ * Body: {
+ *   "queries": [
+ *     {
+ *       "id": "cliente",                    // Identificador único para esta consulta
+ *       "sql": "SELECT ... WHERE ... = ?",  // Query SQL con placeholders
+ *       "params": ["valor1", "valor2"],     // Parámetros para los placeholders
+ *       "stopOnEmpty": true                 // Opcional: detener si no hay resultados
+ *     },
+ *     {
+ *       "id": "modulos",
+ *       "sql": "SELECT ... WHERE ... = ?",
+ *       "params": ["{{cliente.ClienteNombre}}"],  // Usar resultado de query anterior
+ *       "stopOnEmpty": false
+ *     }
+ *   ]
+ * }
+ * 
+ * CARACTERÍSTICAS:
+ * - ✅ Múltiples consultas en secuencia
+ * - ✅ Parámetros dinámicos con placeholders (?)
+ * - ✅ Referencia a resultados de consultas anteriores con {{queryId.campo}}
+ * - ✅ Control de flujo con stopOnEmpty
+ * - ✅ Respuesta estructurada por ID de consulta
+ * - ✅ Mismas protecciones de seguridad que /consulta
+ * 
+ * SEGURIDAD:
+ * - Solo permite consultas SELECT
+ * - Rechaza UPDATE, DELETE, DROP, ALTER, etc.
+ * - Usa prepared statements para prevenir inyección SQL
+ */
+router.post('/consultaMAYOR', async (req, res) => {
+  const { queries } = req.body;
+  
+  // Validar que existe el array de consultas
+  if (!Array.isArray(queries) || queries.length === 0) {
+    return res.status(400).json({ 
+      status: 'error', 
+      message: 'Debes enviar un array de queries en el cuerpo de la petición' 
+    });
+  }
 
+  // Validar estructura de cada query
+  for (let i = 0; i < queries.length; i++) {
+    const q = queries[i];
+    if (!q.id || typeof q.id !== 'string') {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: `Query en posición ${i} debe tener un 'id' string` 
+      });
+    }
+    if (!q.sql || typeof q.sql !== 'string') {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: `Query '${q.id}' debe tener un 'sql' string` 
+      });
+    }
+    
+    // Protección: solo SELECT
+    const queryTrimmed = q.sql.trim().toLowerCase();
+    if (!queryTrimmed.startsWith('select')) {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: `Query '${q.id}': Solo se permiten consultas SELECT` 
+      });
+    }
+
+    // Protección adicional: rechazar palabras clave peligrosas
+    const dangerousKeywords = ['drop', 'delete', 'update', 'insert', 'alter', 'create', 'truncate', 'exec', 'execute'];
+    const hasDangerousKeyword = dangerousKeywords.some(keyword => 
+      queryTrimmed.includes(keyword)
+    );
+
+    if (hasDangerousKeyword) {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: `Query '${q.id}': La consulta contiene palabras clave no permitidas` 
+      });
+    }
+  }
+
+  try {
+    const results = {};
+    const executionLog = [];
+
+    // Ejecutar queries en secuencia
+    for (const query of queries) {
+      const startTime = Date.now();
+      
+      // Reemplazar referencias a resultados anteriores
+      let params = query.params || [];
+      if (Array.isArray(params)) {
+        params = params.map(param => {
+          if (typeof param === 'string' && param.startsWith('{{') && param.endsWith('}}')) {
+            // Extraer referencia: {{queryId.campo}} o {{queryId[0].campo}}
+            const ref = param.slice(2, -2);
+            const match = ref.match(/^(\w+)(?:\[(\d+)\])?\.(\w+)$/);
+            
+            if (match) {
+              const [, queryId, index, field] = match;
+              
+              if (!results[queryId]) {
+                throw new Error(`Referencia a query inexistente: ${queryId}`);
+              }
+              
+              const data = results[queryId].data;
+              if (index !== undefined) {
+                // Acceso por índice: {{queryId[0].campo}}
+                const idx = parseInt(index);
+                if (data[idx] && data[idx][field] !== undefined) {
+                  return data[idx][field];
+                }
+              } else {
+                // Acceso directo: {{queryId.campo}} (primer resultado)
+                if (data[0] && data[0][field] !== undefined) {
+                  return data[0][field];
+                }
+              }
+              
+              throw new Error(`No se pudo resolver la referencia: ${param}`);
+            }
+          }
+          return param;
+        });
+      }
+
+      // Ejecutar consulta
+      const [rows] = await pool.execute(query.sql, params);
+      const executionTime = Date.now() - startTime;
+
+      // Guardar resultado
+      results[query.id] = {
+        rowCount: rows.length,
+        data: rows,
+        executionTime: `${executionTime}ms`
+      };
+
+      executionLog.push({
+        id: query.id,
+        rowCount: rows.length,
+        executionTime: `${executionTime}ms`,
+        params: params
+      });
+
+      // Control de flujo: detener si no hay resultados y stopOnEmpty es true
+      if (query.stopOnEmpty && rows.length === 0) {
+        return res.status(404).json({
+          status: 'error',
+          message: `Query '${query.id}' no retornó resultados (stopOnEmpty=true)`,
+          executedQueries: executionLog,
+          results: results
+        });
+      }
+    }
+
+    return res.status(200).json({
+      status: 'ok',
+      totalQueries: queries.length,
+      executionLog: executionLog,
+      results: results
+    });
+
+  } catch (error) {
+    console.error('❌ ERROR EN /control-pedido/consultaMAYOR:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error al ejecutar las consultas',
+      detail: error.message,
+      sqlMessage: error.sqlMessage
+    });
+  }
+});
 
 module.exports = router;
 
