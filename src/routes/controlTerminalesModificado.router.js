@@ -772,23 +772,103 @@ router.get('/production-analytics-sin-fechas', async (req, res) => {
   }
 });
 
+/**
+ * ============================================================================
+ * OPTIMIZACIÓN #6: /pedidos-en-fabrica - SEVERIDAD MEDIA
+ * ============================================================================
+ * 
+ * ANTES:
+ * - Traía TODOS los pedidos en fábrica sin límite (potencialmente miles)
+ * - Sin paginación ni filtros
+ * - Sin límite temporal
+ * 
+ * DESPUÉS:
+ * - Paginación con limit/offset
+ * - Filtros por cliente, búsqueda en NumeroManual/Descripción
+ * - Límite temporal de 180 días (configurable)
+ * - Reducción: ~1000 → 100 registros (90% menos)
+ * 
+ * Query params:
+ * - search: string (búsqueda en NumeroManual, Descripcion, Cliente)
+ * - cliente: string (filtro por cliente específico)
+ * - limit: number (default 100)
+ * - offset: number (default 0)
+ * - days: number (default 180, máximo histórico en días)
+ * ============================================================================
+ */
 router.get('/pedidos-en-fabrica', async (req, res) => {
   try {
+    const { 
+      search = '', 
+      cliente = '', 
+      limit = 100, 
+      offset = 0,
+      days = 180 
+    } = req.query;
+
+    // Construir condiciones WHERE dinámicamente
+    let whereConditions = [
+      'll.FabricacionNumeroManual IS NOT NULL',
+      'll.FabricacionNumeroManual != \'\'',
+      `l.FechaRealInicio >= DATE_SUB(CURDATE(), INTERVAL ${parseInt(days)} DAY)`
+    ];
+    let params = [];
+
+    // Filtro por búsqueda
+    if (search && search.trim() !== '') {
+      const searchTerm = `%${search.trim()}%`;
+      whereConditions.push(
+        '(l.NumeroManual LIKE ? OR l.Descripcion LIKE ? OR ll.Cliente LIKE ?)'
+      );
+      params.push(searchTerm, searchTerm, searchTerm);
+    }
+
+    // Filtro por cliente
+    if (cliente && cliente.trim() !== '') {
+      whereConditions.push('ll.Cliente LIKE ?');
+      params.push(`%${cliente.trim()}%`);
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
     const sql = `
       SELECT
         l.Codigo, l.NumeroManual, l.FechaRealInicio, l.Descripcion,
         ll.OrigenSerie, ll.OrigenNumero, ll.Linea,
-        ll.DatosFabricacion, ll.FabricacionNumeroManual, ll.Cliente, ll.Modulo, ll.Descripcion AS LineaDescripcion
+        ll.DatosFabricacion, ll.FabricacionNumeroManual, ll.Cliente, 
+        ll.Modulo, ll.Descripcion AS LineaDescripcion
       FROM lotes l
       JOIN loteslineas ll
         ON l.Codigo = ll.CodigoLote
-      WHERE ll.FabricacionNumeroManual IS NOT NULL
-        AND ll.FabricacionNumeroManual != ''
-      ORDER BY l.FechaRealInicio DESC;
+      WHERE ${whereClause}
+      ORDER BY l.FechaRealInicio DESC
+      LIMIT ? OFFSET ?
     `;
 
-    const [rows] = await pool.execute(sql);
-    res.status(200).json(rows);
+    params.push(parseInt(limit), parseInt(offset));
+
+    const [rows] = await pool.execute(sql, params);
+
+    // Obtener el total de registros para paginación
+    const countSql = `
+      SELECT COUNT(*) as total
+      FROM lotes l
+      JOIN loteslineas ll
+        ON l.Codigo = ll.CodigoLote
+      WHERE ${whereClause}
+    `;
+    const countParams = params.slice(0, -2); // Remover limit y offset
+    const [countResult] = await pool.execute(countSql, countParams);
+
+    res.status(200).json({
+      data: rows,
+      pagination: {
+        total: countResult[0].total,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        hasMore: (parseInt(offset) + parseInt(limit)) < countResult[0].total
+      }
+    });
   } catch (error) {
     console.error('❌ ERROR EN /pedidos-en-fabrica:', error);
     res.status(500).json({ status: 'error', message: error.message });
@@ -922,7 +1002,7 @@ router.get('/reporte', async (req, res) => {
 
 /**
  * ============================================================================
- * OPTIMIZACIÓN #6: /tiempos-operario-lote - SEVERIDAD MEDIA
+ * OPTIMIZACIÓN #7: /tiempos-operario-lote - SEVERIDAD MEDIA
  * ============================================================================
  * 
  * ANTES:

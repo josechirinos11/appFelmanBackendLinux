@@ -283,6 +283,71 @@ router.post('/info-para-terminales', async (req, res, next) => {
   }
 });
 
+// ...existing code...
+
+/**
+ * POST /control-pedido/consulta
+ * Ejecuta una consulta SQL de SOLO LECTURA (SELECT) contra la BD principal.
+ * Body: { "query": "SELECT ..." }
+ * 
+ * SEGURIDAD:
+ * - Solo permite consultas SELECT
+ * - Rechaza UPDATE, DELETE, DROP, ALTER, etc.
+ * - Protección básica contra inyección SQL
+ */
+router.post('/consulta', async (req, res) => {
+  const { query } = req.body;
+  
+  // Validar que existe la consulta
+  if (!query || typeof query !== 'string') {
+    return res.status(400).json({ 
+      status: 'error', 
+      message: 'Falta la consulta SQL en el cuerpo de la petición' 
+    });
+  }
+
+  // Protección: solo SELECT (evita UPDATE/DELETE/DDL)
+  const queryTrimmed = query.trim().toLowerCase();
+  if (!queryTrimmed.startsWith('select')) {
+    return res.status(400).json({ 
+      status: 'error', 
+      message: 'Solo se permiten consultas SELECT' 
+    });
+  }
+
+  // Protección adicional: rechazar palabras clave peligrosas
+  const dangerousKeywords = ['drop', 'delete', 'update', 'insert', 'alter', 'create', 'truncate', 'exec', 'execute'];
+  const hasDangerousKeyword = dangerousKeywords.some(keyword => 
+    queryTrimmed.includes(keyword)
+  );
+
+  if (hasDangerousKeyword) {
+    return res.status(400).json({ 
+      status: 'error', 
+      message: 'La consulta contiene palabras clave no permitidas' 
+    });
+  }
+
+  try {
+    const [rows] = await pool.query(query);
+    
+    return res.status(200).json({
+      status: 'ok',
+      rowCount: rows.length,
+      data: rows
+    });
+  } catch (error) {
+    console.error('❌ ERROR EN /control-pedido/consulta:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error al ejecutar la consulta',
+      detail: error.message,
+      sqlMessage: error.sqlMessage
+    });
+  }
+});
+
+
 
 module.exports = router;
 
