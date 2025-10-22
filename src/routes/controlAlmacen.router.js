@@ -503,4 +503,199 @@ router.use((err, req, res, next) => {
   res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: err.message });
 });
 
+
+
+
+
+
+// Lee reportes con filtro de fechas (>= from y < to+1día)
+
+
+// Lee reportes con filtro de fechas (>= from y < to+1día)
+
+
+// Lee reportes con filtro de fechas (>= from y < to+1día)
+
+
+// Lee reportes con filtro de fechas (>= from y < to+1día)
+
+
+// Lee reportes con filtro de fechas (>= from y < to+1día)
+
+
+// Lee reportes con filtro de fechas (>= from y < to+1día)
+
+router.get('/control-instaladores/read-reportes', async (req, res) => {
+  console.log(`[${new Date().toISOString()}] GET /control-instaladores/read-reportes - Query:`, req.query);
+  try {
+    const { from, to } = req.query;
+
+    // Construcción de rango: desde inclusivo, hasta exclusivo (día siguiente)
+    // Si no vienen, se fija una semana atrás hasta hoy.
+    const fromDate = from && /^\d{4}-\d{2}-\d{2}$/.test(from)
+      ? from
+      : new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+
+    let toDate = to && /^\d{4}-\d{2}-\d{2}$/.test(to)
+      ? to
+      : new Date().toISOString().slice(0, 10);
+
+    // endExclusive = toDate + 1 día
+    const endExclusive = new Date(toDate);
+    endExclusive.setDate(endExclusive.getDate() + 1);
+    const toExclusive = endExclusive.toISOString().slice(0, 10);
+
+    const sql = `
+      SELECT
+        id,
+        fecha,
+        nombre_instalador,
+        obra,
+        direccion,
+        descripcion,
+        status,
+        incidencia,
+        geo_lat,
+        geo_lng,
+        geo_address,
+        TIME_FORMAT(hora_modal, '%H:%i:%s') AS hora_modal
+      FROM reportes
+      WHERE fecha >= ? AND fecha < ?
+      ORDER BY fecha DESC, id DESC
+    `;
+    const [rows] = await poolAlmacen.query(sql, [fromDate, toExclusive]);
+    res.json({ status: 'ok', data: rows });
+  } catch (error) {
+    console.error('❌ Error en read-reportes:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: error.message });
+  }
+});
+
+// Crea un reporte
+router.post('/control-instaladores/create-reportes', async (req, res) => {
+  console.log(`[${new Date().toISOString()}] POST /control-instaladores/create-reportes - Body:`, req.body);
+  try {
+    const {
+      fecha,
+      nombre_instalador,
+      obra,
+      direccion,
+      descripcion,
+      status,
+      incidencia,
+      geo_lat,
+      geo_lng,
+      geo_address,
+      hora_modal
+    } = req.body || {};
+
+    // Validaciones mínimas
+    if (!fecha || !nombre_instalador || !obra || !direccion || !status || !incidencia) {
+      return res.status(400).json({ status: 'error', message: 'Faltan campos obligatorios' });
+    }
+
+    const sql = `
+      INSERT INTO reportes
+      (fecha, nombre_instalador, obra, direccion, descripcion, status, incidencia,
+       geo_lat, geo_lng, geo_address, hora_modal)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    `;
+    await poolAlmacen.query(sql, [
+      fecha,
+      nombre_instalador,
+      obra,
+      direccion,
+      descripcion ?? null,
+      status,
+      incidencia,
+      geo_lat ?? null,
+      geo_lng ?? null,
+      geo_address ?? null,
+      hora_modal ?? null
+    ]);
+
+    res.json({ status: 'ok', message: 'Reporte creado correctamente' });
+  } catch (error) {
+    console.error('❌ Error en create-reportes:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: error.message });
+  }
+});
+
+// Actualiza un reporte
+router.post('/control-instaladores/update-reportes', async (req, res) => {
+  console.log(`[${new Date().toISOString()}] POST /control-instaladores/update-reportes - Body:`, req.body);
+  try {
+    const {
+      id,
+      fecha,
+      nombre_instalador,
+      obra,
+      direccion,
+      descripcion,
+      status,
+      incidencia,
+      geo_lat,
+      geo_lng,
+      geo_address,
+      hora_modal
+    } = req.body || {};
+
+    if (!id) {
+      return res.status(400).json({ status: 'error', message: 'Se requiere id' });
+    }
+
+    const sql = `
+      UPDATE reportes
+      SET
+        fecha = ?,
+        nombre_instalador = ?,
+        obra = ?,
+        direccion = ?,
+        descripcion = ?,
+        status = ?,
+        incidencia = ?,
+        geo_lat = ?,
+        geo_lng = ?,
+        geo_address = ?,
+        hora_modal = ?
+      WHERE id = ?
+    `;
+    await poolAlmacen.query(sql, [
+      fecha ?? null,
+      nombre_instalador ?? null,
+      obra ?? null,
+      direccion ?? null,
+      descripcion ?? null,
+      status ?? null,
+      incidencia ?? null,
+      (geo_lat === undefined ? null : geo_lat),
+      (geo_lng === undefined ? null : geo_lng),
+      (geo_address === undefined ? null : geo_address),
+      (hora_modal === undefined ? null : hora_modal),
+      id
+    ]);
+
+    res.json({ status: 'ok', message: 'Reporte actualizado correctamente' });
+  } catch (error) {
+    console.error('❌ Error en update-reportes:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: error.message });
+  }
+});
+
+// Elimina un reporte
+router.post('/control-instaladores/delete-reportes', async (req, res) => {
+  console.log(`[${new Date().toISOString()}] POST /control-instaladores/delete-reportes - Body:`, req.body);
+  try {
+    const { id } = req.body || {};
+    if (!id) {
+      return res.status(400).json({ status: 'error', message: 'Se requiere id' });
+    }
+    await poolAlmacen.query('DELETE FROM reportes WHERE id = ?', [id]);
+    res.json({ status: 'ok', message: 'Reporte eliminado correctamente' });
+  } catch (error) {
+    console.error('❌ Error en delete-reportes:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: error.message });
+  }
+});
+
 module.exports = router;
