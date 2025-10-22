@@ -74,6 +74,7 @@ router.get('/articulos', async (req, res) => {
   });
   
   router.put('/articulosactualizar/:id', async (req, res) => {
+    console.log(`[${new Date().toISOString()}] PUT /articulosactualizar/${req.params.id} - Body:`, req.body);
     const { id } = req.params;
     const { nombre, descripcion, precio_costo, precio_venta, stock_minimo, stock_maximo, actualizado_por } = req.body;
     await poolAlmacen.query('UPDATE articulos SET nombre=?, descripcion=?, precio_costo=?, precio_venta=?, stock_minimo=?, stock_maximo=?, actualizado_por=? WHERE id=?', [nombre, descripcion, precio_costo, precio_venta, stock_minimo, stock_maximo, actualizado_por, id]);
