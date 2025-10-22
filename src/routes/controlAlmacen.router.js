@@ -493,16 +493,7 @@ router.delete('/usuarioseliminar/:id', async (req, res) => {
   }
 });
 
-// Handler 404 para rutas no encontradas
-router.use((req, res) => {
-  res.status(404).json({ status: 'error', message: 'Ruta no encontrada' });
-});
 
-// Middleware de manejo de errores
-router.use((err, req, res, next) => {
-  console.error('❌ Error en control-almacén:', err);
-  res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: err.message });
-});
 
 
 
@@ -699,5 +690,22 @@ router.post('/control-instaladores/delete-reportes', async (req, res) => {
     res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: error.message });
   }
 });
+
+
+
+// Handler 404 para rutas no encontradas
+router.use((req, res) => {
+  res.status(404).json({ status: 'error', message: 'Ruta no encontrada' });
+});
+
+// Middleware de manejo de errores
+router.use((err, req, res, next) => {
+  console.error('❌ Error en control-almacén:', err);
+  res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: err.message });
+});
+
+
+
+
 
 module.exports = router;
