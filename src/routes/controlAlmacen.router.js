@@ -683,6 +683,7 @@ router.post('/control-instaladores/update-reportes', async (req, res) => {
 });
 
 // Elimina un reporte
+// Elimina un reporte
 router.post('/control-instaladores/delete-reportes', async (req, res) => {
   console.log(`[${new Date().toISOString()}] POST /control-instaladores/delete-reportes - Body:`, req.body);
   try {
