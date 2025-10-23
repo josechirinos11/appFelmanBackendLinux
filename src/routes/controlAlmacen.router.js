@@ -1,3 +1,4 @@
+
 // src/routes/controlAlmacen.router.js
 const express = require('express');
 const poolAlmacen = require('../config/databaseAlamcen');
@@ -722,6 +723,18 @@ router.post('/control-instaladores/delete-reportes', async (req, res) => {
     res.json({ status: 'ok', message: 'Reporte eliminado correctamente' });
   } catch (error) {
     console.error('❌ Error en delete-reportes:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: error.message });
+  }
+});
+
+
+// Obtener información de usuariosInstaladores
+router.get('/control-instaladores/obtenerinformacionUsuario', async (req, res) => {
+  try {
+    const [rows] = await poolAlmacen.query('SELECT * FROM usuariosInstaladores');
+    res.json({ status: 'ok', data: rows });
+  } catch (error) {
+    console.error('❌ Error en obtenerinformacionUsuario:', error);
     res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: error.message });
   }
 });
