@@ -540,17 +540,23 @@ router.get('/control-instaladores/read-reportes', async (req, res) => {
     const sql = `
       SELECT
         id,
+        equipo_montador,
         fecha,
+        hora_inicio,
+        hora_fin,
+        hora_modal_final,
         nombre_instalador,
         obra,
+        cliente,
         direccion,
+        tipo_trabajo,
         descripcion,
         status,
         incidencia,
         geo_lat,
         geo_lng,
         geo_address,
-        TIME_FORMAT(hora_modal, '%H:%i:%s') AS hora_modal
+        unidades
       FROM reportes
       WHERE fecha >= ? AND fecha < ?
       ORDER BY fecha DESC, id DESC
@@ -568,17 +574,23 @@ router.post('/control-instaladores/create-reportes', async (req, res) => {
   console.log(`[${new Date().toISOString()}] POST /control-instaladores/create-reportes - Body:`, req.body);
   try {
     const {
+      equipo_montador,
       fecha,
+      hora_inicio,
+      hora_fin,
+      hora_modal_final,
       nombre_instalador,
       obra,
+      cliente,
       direccion,
+      tipo_trabajo,
       descripcion,
       status,
       incidencia,
       geo_lat,
       geo_lng,
       geo_address,
-      hora_modal
+      unidades
     } = req.body || {};
 
     // Validaciones mínimas
@@ -588,22 +600,27 @@ router.post('/control-instaladores/create-reportes', async (req, res) => {
 
     const sql = `
       INSERT INTO reportes
-      (fecha, nombre_instalador, obra, direccion, descripcion, status, incidencia,
-       geo_lat, geo_lng, geo_address, hora_modal)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      (equipo_montador, fecha, hora_inicio, hora_fin, hora_modal_final, nombre_instalador, obra, cliente, direccion, tipo_trabajo, descripcion, status, incidencia, geo_lat, geo_lng, geo_address, unidades)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `;
     await poolAlmacen.query(sql, [
+      equipo_montador ?? null,
       fecha,
+      hora_inicio ?? null,
+      hora_fin ?? null,
+      hora_modal_final ?? null,
       nombre_instalador,
       obra,
+      cliente ?? null,
       direccion,
+      tipo_trabajo ?? null,
       descripcion ?? null,
       status,
       incidencia,
       geo_lat ?? null,
       geo_lng ?? null,
       geo_address ?? null,
-      hora_modal ?? null
+      unidades ?? null
     ]);
 
     res.json({ status: 'ok', message: 'Reporte creado correctamente' });
@@ -619,17 +636,23 @@ router.post('/control-instaladores/update-reportes', async (req, res) => {
   try {
     const {
       id,
+      equipo_montador,
       fecha,
+      hora_inicio,
+      hora_fin,
+      hora_modal_final,
       nombre_instalador,
       obra,
+      cliente,
       direccion,
+      tipo_trabajo,
       descripcion,
       status,
       incidencia,
       geo_lat,
       geo_lng,
       geo_address,
-      hora_modal
+      unidades
     } = req.body || {};
 
     if (!id) {
@@ -639,31 +662,43 @@ router.post('/control-instaladores/update-reportes', async (req, res) => {
     const sql = `
       UPDATE reportes
       SET
+        equipo_montador = ?,
         fecha = ?,
+        hora_inicio = ?,
+        hora_fin = ?,
+        hora_modal_final = ?,
         nombre_instalador = ?,
         obra = ?,
+        cliente = ?,
         direccion = ?,
+        tipo_trabajo = ?,
         descripcion = ?,
         status = ?,
         incidencia = ?,
         geo_lat = ?,
         geo_lng = ?,
         geo_address = ?,
-        hora_modal = ?
+        unidades = ?
       WHERE id = ?
     `;
     await poolAlmacen.query(sql, [
+      equipo_montador ?? null,
       fecha ?? null,
+      hora_inicio ?? null,
+      hora_fin ?? null,
+      hora_modal_final ?? null,
       nombre_instalador ?? null,
       obra ?? null,
+      cliente ?? null,
       direccion ?? null,
+      tipo_trabajo ?? null,
       descripcion ?? null,
       status ?? null,
       incidencia ?? null,
       (geo_lat === undefined ? null : geo_lat),
       (geo_lng === undefined ? null : geo_lng),
       (geo_address === undefined ? null : geo_address),
-      (hora_modal === undefined ? null : hora_modal),
+      (unidades === undefined ? null : unidades),
       id
     ]);
 
