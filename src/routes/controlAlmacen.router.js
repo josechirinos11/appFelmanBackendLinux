@@ -574,7 +574,8 @@ router.get('/control-instaladores/read-reportes', async (req, res) => {
 router.post('/control-instaladores/create-reportes', async (req, res) => {
   console.log(`[${new Date().toISOString()}] POST /control-instaladores/create-reportes - Body:`, req.body);
   try {
-    const {
+
+    let {
       equipo_montador,
       fecha,
       hora_inicio,
@@ -593,6 +594,11 @@ router.post('/control-instaladores/create-reportes', async (req, res) => {
       geo_address,
       unidades
     } = req.body || {};
+
+    // Convertir cadenas vacías a null para los campos de hora
+    hora_inicio = (hora_inicio === '' ? null : hora_inicio);
+    hora_fin = (hora_fin === '' ? null : hora_fin);
+    hora_modal_final = (hora_modal_final === '' ? null : hora_modal_final);
 
     // Validaciones mínimas (solo obligatorios: fecha, nombre_instalador, obra)
     if (!fecha || !nombre_instalador || !obra) {
