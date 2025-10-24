@@ -594,9 +594,9 @@ router.post('/control-instaladores/create-reportes', async (req, res) => {
       unidades
     } = req.body || {};
 
-    // Validaciones mínimas
-    if (!fecha || !nombre_instalador || !obra || !direccion || !status || !incidencia) {
-      return res.status(400).json({ status: 'error', message: 'Faltan campos obligatorios' });
+    // Validaciones mínimas (solo obligatorios: fecha, nombre_instalador, obra)
+    if (!fecha || !nombre_instalador || !obra) {
+      return res.status(400).json({ status: 'error', message: 'Faltan campos obligatorios: fecha, nombre_instalador y obra' });
     }
 
     const sql = `
