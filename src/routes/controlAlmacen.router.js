@@ -635,74 +635,22 @@ router.post('/control-instaladores/create-reportes', async (req, res) => {
 router.post('/control-instaladores/update-reportes', async (req, res) => {
   console.log(`[${new Date().toISOString()}] POST /control-instaladores/update-reportes - Body:`, req.body);
   try {
-    const {
-      id,
-      equipo_montador,
-      fecha,
-      hora_inicio,
-      hora_fin,
-      hora_modal_final,
-      nombre_instalador,
-      obra,
-      cliente,
-      direccion,
-      tipo_trabajo,
-      descripcion,
-      status,
-      incidencia,
-      geo_lat,
-      geo_lng,
-      geo_address,
-      unidades
-    } = req.body || {};
-
+    const { id, ...fields } = req.body || {};
     if (!id) {
       return res.status(400).json({ status: 'error', message: 'Se requiere id' });
     }
-
-    const sql = `
-      UPDATE reportes
-      SET
-        equipo_montador = ?,
-        fecha = ?,
-        hora_inicio = ?,
-        hora_fin = ?,
-        hora_modal_final = ?,
-        nombre_instalador = ?,
-        obra = ?,
-        cliente = ?,
-        direccion = ?,
-        tipo_trabajo = ?,
-        descripcion = ?,
-        status = ?,
-        incidencia = ?,
-        geo_lat = ?,
-        geo_lng = ?,
-        geo_address = ?,
-        unidades = ?
-      WHERE id = ?
-    `;
-    await poolAlmacen.query(sql, [
-      equipo_montador ?? null,
-      fecha ?? null,
-      hora_inicio ?? null,
-      hora_fin ?? null,
-      hora_modal_final ?? null,
-      nombre_instalador ?? null,
-      obra ?? null,
-      cliente ?? null,
-      direccion ?? null,
-      tipo_trabajo ?? null,
-      descripcion ?? null,
-      status ?? null,
-      incidencia ?? null,
-      (geo_lat === undefined ? null : geo_lat),
-      (geo_lng === undefined ? null : geo_lng),
-      (geo_address === undefined ? null : geo_address),
-      (unidades === undefined ? null : unidades),
-      id
-    ]);
-
+    // No permitir actualizar el id
+    delete fields.id;
+    if (Object.keys(fields).length === 0) {
+      return res.status(400).json({ status: 'error', message: 'No hay campos para actualizar' });
+    }
+    // Construir SET dinámico
+    const setClause = Object.keys(fields)
+      .map(key => `${key} = ?`)
+      .join(', ');
+    const values = Object.values(fields);
+    const sql = `UPDATE reportes SET ${setClause} WHERE id = ?`;
+    await poolAlmacen.query(sql, [...values, id]);
     res.json({ status: 'ok', message: 'Reporte actualizado correctamente' });
   } catch (error) {
     console.error('❌ Error en update-reportes:', error);
