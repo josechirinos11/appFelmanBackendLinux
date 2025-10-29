@@ -88,6 +88,20 @@ app.get('*', (req, res) => {
 });
 
 
+// --- HEALTH: no toca Informix, responde inmediato
+app.get('/control-afix/healthz', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'control-afix',
+    time: new Date().toISOString(),
+    pid: process.pid
+  });
+});
+
+
+
+
+
 // Manejo de errores
 app.use(errors());
 app.use(errorHandler);
