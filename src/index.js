@@ -16,6 +16,8 @@ const controlTerminalesRoutes = require('./routes/controlTerminalesModificado.ro
 const controlAlmacenRoutes= require('./routes/controlAlmacen.router.js');
 const controlOptimaRoutes= require('./routes/controlOptima.routes.js');
 
+const controlAfixRoutes = require('./routes/controlAfix.routes.js');
+
 const path = require('path');
 const rootPath = path.join(__dirname, '..');
 
@@ -65,6 +67,9 @@ app.use('/control-access', controlAccessRoutes);
 app.use('/control-terminales', controlTerminalesRoutes); // Agrega esta línea
 app.use('/control-almacen', controlAlmacenRoutes);
 app.use('/control-optima', controlOptimaRoutes);
+
+
+app.use('/control-afix', controlAfixRoutes);
 //app.use('/control-access-windows', controlAccessWindowsRoutes);
 
 
