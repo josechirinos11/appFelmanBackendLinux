@@ -5,6 +5,7 @@ const Afix = require('../services/informix.service');
 
 // GET /control-afix/ping
 router.get('/ping', async (req, res) => {
+  console.log('Se solicitó la ruta: /control-afix/ping');
   try {
     const r = await Afix.ping();
     return res.json({ status: 'ok', data: r.out });
@@ -15,6 +16,7 @@ router.get('/ping', async (req, res) => {
 
 // GET /control-afix/cli/by-dni?dni=XXXXXXXXX
 router.get('/cli/by-dni', async (req, res) => {
+  console.log('Se solicitó la ruta: /control-afix/cli/by-dni', req.query);
   try {
     const { dni } = req.query;
     if (!dni) return res.status(400).json({ status: 'error', error: 'dni requerido' });
@@ -27,6 +29,7 @@ router.get('/cli/by-dni', async (req, res) => {
 
 // GET /control-afix/cli/search?text=CRISTALERIA*
 router.get('/cli/search', async (req, res) => {
+  console.log('Se solicitó la ruta: /control-afix/cli/search', req.query);
   try {
     const { text } = req.query;
     if (!text) return res.status(400).json({ status: 'error', error: 'text requerido' });
