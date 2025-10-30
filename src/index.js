@@ -39,77 +39,69 @@ const DatabaseMonitor = require('./monitoreos/database-monitor');
 
 function runAfixSelect(sql) {
   const { spawn } = require('child_process');
+  const fs = require('fs');
 
-  const safeSql = String(sql).replace(/'/g, `'\\''`);
+  // 1) Entorno mínimo de Informix (de tu propio servidor)
+  //    Tomados de: env | egrep 'INFORMIX|DBLANG|DBDATE|CLIENT_LOCALE|DB_LOCALE|DBSERVER'
+  const envInformix = {
+    INFORMIXDIR: '/home/ix730',
+    INFORMIXSERVER: 'afix4_pip',
+    CLIENT_LOCALE: 'es_es.8859-1',
+    DB_LOCALE: 'es_es.8859-1',
+    DBDATE: 'DMY4/',
+    // Evitar bloqueos de conexión
+    INFORMIXCONTIME: '5',
+    INFORMIXCONRETRY: '1',
+    // PATH por si el helper requiere binarios dentro de INFORMIXDIR/bin
+    PATH: `${process.env.PATH || ''}:/home/ix730/bin:/home/ix730/lib`,
+  };
 
-  // -------- LOGS ÚTILES --------
-  const start = Date.now();
-  const HOME = process.env.HOME || '/home/deploy_felman';
-  const ENV_FILE = `${HOME}/.afix_env.sh`;
-  console.log('[AFIX] runAfixSelect:start', {
-    now: new Date().toISOString(),
-    HOME,
-    ENV_FILE_EXISTS: require('fs').existsSync(ENV_FILE),
-    INFORMIXDIR: process.env.INFORMIXDIR || '(no)',
-    INFORMIXSERVER: process.env.INFORMIXSERVER || '(no)',
+  // 2) Comando base: afix_select "SQL"
+  //    (afix_select une todos los args en un SQL; aquí pasamos UNO solo)
+  const args = [ String(sql) ];
+
+  // 3) Intentar usar /usr/bin/timeout si existe
+  let cmd = '/usr/local/bin/afix_select';
+  let finalArgs = args;
+
+  try {
+    if (fs.existsSync('/usr/bin/timeout')) {
+      cmd = '/usr/bin/timeout';
+      finalArgs = ['8s', '/usr/local/bin/afix_select', ...args];
+    } else if (fs.existsSync('/bin/timeout')) {
+      cmd = '/bin/timeout';
+      finalArgs = ['8s', '/usr/local/bin/afix_select', ...args];
+    }
+  } catch (_) {}
+
+  // 4) Lanzar proceso con entorno combinado (sin source ~/.afix_env.sh)
+  const child = spawn(cmd, finalArgs, {
+    env: { ...process.env, ...envInformix },
   });
-
-  // Detectar timeout disponible
-  const timeoutDetect = `
-    TO=$(
-      command -v timeout || command -v /usr/bin/timeout || command -v /bin/timeout || echo ''
-    );
-    echo "$TO"
-  `;
-  // Usamos un mini shell para resolver la ruta de timeout
-  const timeoutPath = require('child_process')
-    .spawnSync('/bin/bash', ['-lc', timeoutDetect], { env: process.env })
-    .stdout.toString('utf8').trim();
-
-  // Construir comando robusto
-  const bashCmd = `
-    set -e
-    export HOME='${HOME}'
-    [ -f '${ENV_FILE}' ] && source '${ENV_FILE}'
-    export INFORMIXCONTIME=5
-    export INFORMIXCONRETRY=1
-    if [ -n '${timeoutPath}' ]; then
-      '${timeoutPath}' 8s /usr/local/bin/afix_select '${safeSql}'
-    else
-      /usr/local/bin/afix_select '${safeSql}'
-    fi
-  `.trim();
-
-  console.log('[AFIX] bashCmd (resumen):', bashCmd.replace(safeSql, '[SQL REDACTED]'));
-
-  const child = spawn('/bin/bash', ['-lc', bashCmd], { env: process.env });
 
   let out = '';
   let err = '';
-  child.stdout.on('data', c => {
-    out += c.toString('utf8');
-    // Log parcial para depurar (recorta a 200 chars)
-    if (out.length < 1000) console.log('[AFIX] stdout+', c.toString('utf8').slice(0, 200));
-  });
-  child.stderr.on('data', c => {
-    err += c.toString('utf8');
-    console.warn('[AFIX] stderr+', c.toString('utf8').slice(0, 500));
-  });
+
+  // Respaldo: timeout por software (por si no hay 'timeout')
+  const killTimer = setTimeout(() => {
+    try { child.kill('SIGKILL'); } catch {}
+  }, 9000); // 9s hard kill
+
+  child.stdout.on('data', c => out += c.toString('utf8'));
+  child.stderr.on('data', c => err += c.toString('utf8'));
 
   return new Promise((resolve, reject) => {
     child.on('close', code => {
-      const ms = Date.now() - start;
-      console.log('[AFIX] runAfixSelect:close', { code, ms, out_len: out.length, err_len: err.length });
-
+      clearTimeout(killTimer);
       if (code !== 0) {
         const detail = (err || out || '').trim() || (code === 124 ? 'timeout 8s' : '');
-        console.error('[AFIX] runAfixSelect:error', detail.slice(0, 1000));
         return reject(new Error(detail || `afix_select exited with code ${code}`));
       }
       resolve(out);
     });
   });
 }
+
 
 
 
