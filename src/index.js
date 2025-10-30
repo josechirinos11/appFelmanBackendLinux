@@ -40,64 +40,96 @@ const DatabaseMonitor = require('./monitoreos/database-monitor');
 function runAfixSelect(sql) {
   const { spawn } = require('child_process');
   const fs = require('fs');
+  const path = require('path');
 
-  // 1) Entorno mínimo de Informix (de tu propio servidor)
-  //    Tomados de: env | egrep 'INFORMIX|DBLANG|DBDATE|CLIENT_LOCALE|DB_LOCALE|DBSERVER'
+  // === ENTORNO INFORMIX MÍNIMO (tu servidor) ===
   const envInformix = {
     INFORMIXDIR: '/home/ix730',
     INFORMIXSERVER: 'afix4_pip',
     CLIENT_LOCALE: 'es_es.8859-1',
     DB_LOCALE: 'es_es.8859-1',
     DBDATE: 'DMY4/',
-    // Evitar bloqueos de conexión
     INFORMIXCONTIME: '5',
     INFORMIXCONRETRY: '1',
-    // PATH por si el helper requiere binarios dentro de INFORMIXDIR/bin
     PATH: `${process.env.PATH || ''}:/home/ix730/bin:/home/ix730/lib`,
   };
 
-  // 2) Comando base: afix_select "SQL"
-  //    (afix_select une todos los args en un SQL; aquí pasamos UNO solo)
-  const args = [ String(sql) ];
+  // === Paths y binario dbaccess ===
+  const INFORMIXDIR = envInformix.INFORMIXDIR;
+  const dbaccessBin = fs.existsSync(path.join(INFORMIXDIR, 'bin', 'dbaccess'))
+    ? path.join(INFORMIXDIR, 'bin', 'dbaccess')
+    : '/usr/bin/dbaccess'; // fallback si está en PATH
 
-  // 3) Intentar usar /usr/bin/timeout si existe
-  let cmd = '/usr/local/bin/afix_select';
-  let finalArgs = args;
+  // === DB objetivo (vimos en logs: apli01) ===
+  const DBNAME = 'apli01';
 
-  try {
-    if (fs.existsSync('/usr/bin/timeout')) {
-      cmd = '/usr/bin/timeout';
-      finalArgs = ['8s', '/usr/local/bin/afix_select', ...args];
-    } else if (fs.existsSync('/bin/timeout')) {
-      cmd = '/bin/timeout';
-      finalArgs = ['8s', '/usr/local/bin/afix_select', ...args];
-    }
-  } catch (_) {}
+  // === Archivos temporales ===
+  const pid = process.pid;
+  const rnd = Math.random().toString(36).slice(2);
+  const sqlFile = `/tmp/node_afix_${pid}_${rnd}.sql`;
+  const outFile = `/tmp/node_afix_${pid}_${rnd}.out`;
 
-  // 4) Lanzar proceso con entorno combinado (sin source ~/.afix_env.sh)
-  const child = spawn(cmd, finalArgs, {
-    env: { ...process.env, ...envInformix },
-  });
+  // Limpia comillas en SQL para el script
+  const sqlBody = String(sql).trim();
 
-  let out = '';
-  let err = '';
+  // Script para dbaccess: selecciona BD y hace UNLOAD a un archivo normal
+  const script = `
+database ${DBNAME};
 
-  // Respaldo: timeout por software (por si no hay 'timeout')
-  const killTimer = setTimeout(() => {
-    try { child.kill('SIGKILL'); } catch {}
-  }, 9000); // 9s hard kill
+unload to '${outFile}' delimiter '|'
+${sqlBody}
+;`;
 
-  child.stdout.on('data', c => out += c.toString('utf8'));
-  child.stderr.on('data', c => err += c.toString('utf8'));
+  // Escribimos el SQL en /tmp
+  fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
 
+  // Ejecutamos: dbaccess -e <dbname> <sqlfile>
+  // Nota: pasamos el DBNAME también como argumento aunque esté en el script.
   return new Promise((resolve, reject) => {
+    // Timer de seguridad (hard kill)
+    const killTimer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch {}
+    }, 12000); // 12s
+
+    const child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], {
+      env: { ...process.env, ...envInformix },
+    });
+
+    let out = '';
+    let err = '';
+
+    child.stdout.on('data', c => out += c.toString('utf8'));
+    child.stderr.on('data', c => err += c.toString('utf8'));
+
     child.on('close', code => {
       clearTimeout(killTimer);
-      if (code !== 0) {
-        const detail = (err || out || '').trim() || (code === 124 ? 'timeout 8s' : '');
-        return reject(new Error(detail || `afix_select exited with code ${code}`));
+
+      // Leer resultado si existe
+      let payload = '';
+      try {
+        if (fs.existsSync(outFile)) {
+          payload = fs.readFileSync(outFile, 'utf8');
+        }
+      } catch (e) {
+        // ignora; lo reportamos abajo si hace falta
+      } finally {
+        // Limpieza de temporales
+        try { fs.unlinkSync(sqlFile); } catch {}
+        try { fs.unlinkSync(outFile); } catch {}
       }
-      resolve(out);
+
+      if (code !== 0) {
+        const detail = (err || out || '').trim();
+        return reject(new Error(detail || `dbaccess exited with code ${code}`));
+      }
+
+      // Si dbaccess fue ok pero no hay payload, reporta algo útil
+      if (!payload) {
+        const detail = (err || out || '').trim();
+        return reject(new Error(detail || 'dbaccess ok pero sin datos (payload vacío)'));
+      }
+
+      resolve(payload);
     });
   });
 }
