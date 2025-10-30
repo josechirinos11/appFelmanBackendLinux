@@ -37,49 +37,82 @@ const DatabaseMonitor = require('./monitoreos/database-monitor');
 
 
 
-
 function runAfixSelect(sql) {
   const { spawn } = require('child_process');
 
-  // Escapar comillas simples dentro del SQL
   const safeSql = String(sql).replace(/'/g, `'\\''`);
 
-  // Determinar HOME de forma robusta (systemd a veces no lo pasa)
+  // -------- LOGS ÚTILES --------
+  const start = Date.now();
   const HOME = process.env.HOME || '/home/deploy_felman';
   const ENV_FILE = `${HOME}/.afix_env.sh`;
+  console.log('[AFIX] runAfixSelect:start', {
+    now: new Date().toISOString(),
+    HOME,
+    ENV_FILE_EXISTS: require('fs').existsSync(ENV_FILE),
+    INFORMIXDIR: process.env.INFORMIXDIR || '(no)',
+    INFORMIXSERVER: process.env.INFORMIXSERVER || '(no)',
+  });
 
-  // Elegir timeout disponible (/usr/bin/timeout o /bin/timeout)
-  const timeoutCmd = `$(command -v timeout || command -v /usr/bin/timeout || command -v /bin/timeout)`;
+  // Detectar timeout disponible
+  const timeoutDetect = `
+    TO=$(
+      command -v timeout || command -v /usr/bin/timeout || command -v /bin/timeout || echo ''
+    );
+    echo "$TO"
+  `;
+  // Usamos un mini shell para resolver la ruta de timeout
+  const timeoutPath = require('child_process')
+    .spawnSync('/bin/bash', ['-lc', timeoutDetect], { env: process.env })
+    .stdout.toString('utf8').trim();
 
-  // Reducir bloqueos de conexión si el listener tarda
-  // INFORMIXCONTIME: segundos de espera de conexión; INFORMIXCONRETRY: reintentos
+  // Construir comando robusto
   const bashCmd = `
     set -e
     export HOME='${HOME}'
     [ -f '${ENV_FILE}' ] && source '${ENV_FILE}'
     export INFORMIXCONTIME=5
     export INFORMIXCONRETRY=1
-    ${timeoutCmd} 8s /usr/local/bin/afix_select '${safeSql}'
+    if [ -n '${timeoutPath}' ]; then
+      '${timeoutPath}' 8s /usr/local/bin/afix_select '${safeSql}'
+    else
+      /usr/local/bin/afix_select '${safeSql}'
+    fi
   `.trim();
+
+  console.log('[AFIX] bashCmd (resumen):', bashCmd.replace(safeSql, '[SQL REDACTED]'));
 
   const child = spawn('/bin/bash', ['-lc', bashCmd], { env: process.env });
 
   let out = '';
   let err = '';
-  child.stdout.on('data', c => (out += c.toString('utf8')));
-  child.stderr.on('data', c => (err += c.toString('utf8')));
+  child.stdout.on('data', c => {
+    out += c.toString('utf8');
+    // Log parcial para depurar (recorta a 200 chars)
+    if (out.length < 1000) console.log('[AFIX] stdout+', c.toString('utf8').slice(0, 200));
+  });
+  child.stderr.on('data', c => {
+    err += c.toString('utf8');
+    console.warn('[AFIX] stderr+', c.toString('utf8').slice(0, 500));
+  });
 
   return new Promise((resolve, reject) => {
     child.on('close', code => {
+      const ms = Date.now() - start;
+      console.log('[AFIX] runAfixSelect:close', { code, ms, out_len: out.length, err_len: err.length });
+
       if (code !== 0) {
-        // Si fue timeout, el código típico es 124 (GNU coreutils)
         const detail = (err || out || '').trim() || (code === 124 ? 'timeout 8s' : '');
+        console.error('[AFIX] runAfixSelect:error', detail.slice(0, 1000));
         return reject(new Error(detail || `afix_select exited with code ${code}`));
       }
       resolve(out);
     });
   });
 }
+
+
+
 
 
 
