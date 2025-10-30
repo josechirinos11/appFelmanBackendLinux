@@ -28,6 +28,7 @@ async function getClienteByDni(dni) {
     // Nota: usamos una consulta segura, sin FIRST, y filtramos exacto por NIF/DNI/CIF
   // 2) Fallback por CLI con afix_select (cuando no hay driver)
   // Usamos solo la columna real 'dni'
+   // 2) Fallback por CLI con afix_select (cuando no hay driver)
   const sqlCli = `
 SELECT rowid, cli, ras, dni
 FROM cli
@@ -35,9 +36,23 @@ WHERE TRIM(dni) = '${dniTrim}'
 ORDER BY rowid DESC
 `.trim();
 
-  try {
-    const { stdout } = await execFileAsync('afix_select', [sqlCli], { timeout: 15000, cwd: '/tmp' });
+  const AFIX_CMD = process.env.AFIX_SELECT_CMD || 'afix_select';
+  const AFIX_WORKDIR = process.env.AFIX_WORKDIR || '/tmp';
 
+  try {
+    // Ejecutar vía bash -lc para respetar PATH/entorno del usuario
+    const cmd = `cd "${AFIX_WORKDIR}" && ${AFIX_CMD} "${sqlCli.replace(/"/g, '\\"')}"`;
+    const { stdout } = await execFileAsync('/bin/bash', ['-lc', cmd], {
+      timeout: 20000,
+      cwd: AFIX_WORKDIR,
+      env: {
+        ...process.env,
+        HOME: AFIX_WORKDIR,
+        TMPDIR: AFIX_WORKDIR,
+        TEMP: AFIX_WORKDIR,
+        TMP: AFIX_WORKDIR,
+      },
+    });
     // Formato: "rowid|cli|ras|dni"
     const lines = stdout
       .split('\n')
@@ -57,6 +72,7 @@ ORDER BY rowid DESC
     e.code = 'AFIX_CLI_ERROR';
     throw e;
   }
+
 
 
 
