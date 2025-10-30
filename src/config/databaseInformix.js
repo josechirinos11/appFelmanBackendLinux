@@ -1,39 +1,37 @@
 // src/config/databaseInformix.js
-const ibmdb = require('ibm_db');
+// Carga perezosa (lazy) del driver para que la app no crashee al iniciar.
+// Solo se intentará cargar ibm_db cuando realmente haga falta abrir conexión.
 
-/**
- * Ajusta tus datos reales. SERVER es el nombre del “dbserver” de Informix (onconfig).
- * SERVICE suele ser el puerto (ej. 9088). PROTOCOL normalmente onsoctcp.
- */
-const cfg = {
-  DATABASE: process.env.AFIX_DB || 'afixdb',
-  HOSTNAME: process.env.AFIX_HOST || '128.0.0.253',
-  PORT:     process.env.AFIX_PORT || 9088,
-  SERVER:   process.env.AFIX_SERVER || 'afix_server', // nombre del dbserver (DBSERVERNAME)
-  PROTOCOL: process.env.AFIX_PROTOCOL || 'onsoctcp',
-  UID:      process.env.AFIX_USER || 'informix',
-  PWD:      process.env.AFIX_PASS || '$1mb@',
-};
+let ibmdb = null;
+let driverReady = false;
 
-const connStr =
-  `DATABASE=${cfg.DATABASE};` +
-  `HOSTNAME=${cfg.HOSTNAME};` +
-  `PORT=${cfg.PORT};` +
-  `PROTOCOL=${cfg.PROTOCOL};` +
-  `UID=${cfg.UID};PWD=${cfg.PWD};` +
-  `SERVER=${cfg.SERVER};`;
-
-function query(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    ibmdb.open(connStr, (err, conn) => {
-      if (err) return reject(err);
-      conn.query(sql, params, (err2, rows) => {
-        conn.close(() => {}); // cerrar siempre
-        if (err2) return reject(err2);
-        resolve(rows || []);
-      });
-    });
-  });
+try {
+  // OJO: en SLES12 el binario que trae ibm_db exige GLIBC>=2.32 y puede fallar.
+  // Si falla aquí, no dejamos que explote el proceso, solo marcamos driverReady=false.
+  ibmdb = require('ibm_db');
+  driverReady = true;
+} catch (e) {
+  console.warn('[Informix] ibm_db no disponible en este host:', e.message);
+  driverReady = false;
 }
 
-module.exports = { query };
+const CFG = {
+  // Ajusta a tu cadena real de conexión Informix si ya la tienes en .env
+  connStr:
+    process.env.INFORMIX_CONNSTR ||
+    'DRIVER={IBM INFORMIX ODBC DRIVER};SERVER=your_server;DATABASE=your_db;HOST=your_host;SERVICE=9088;UID=your_user;PWD=your_pwd;PROTOCOL=onsoctcp;',
+};
+
+async function getConnection() {
+  if (!driverReady || !ibmdb) {
+    const err = new Error(
+      'ibm_db no instalado o incompatible (GLIBC). Este host no puede abrir conexión Informix ahora.'
+    );
+    err.code = 'INFORMIX_DRIVER_MISSING';
+    throw err;
+  }
+  // Abre conexión on-demand
+  return ibmdb.open(CFG.connStr);
+}
+
+module.exports = { getConnection, driverReady, CFG };
