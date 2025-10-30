@@ -26,12 +26,37 @@ async function getClienteByDni(dni) {
 
     // 2) Fallback por CLI con afix_select (cuando no hay driver)
     // Nota: usamos una consulta segura, sin FIRST, y filtramos exacto por NIF/DNI/CIF
-    const sqlCli = `
-SELECT rowid, cli, ras, nif, dni, cif
+  // 2) Fallback por CLI con afix_select (cuando no hay driver)
+  // Usamos solo la columna real 'dni'
+  const sqlCli = `
+SELECT rowid, cli, ras, dni
 FROM cli
-WHERE TRIM(nif) = '${dniTrim}' OR TRIM(dni) = '${dniTrim}' OR TRIM(cif) = '${dniTrim}'
+WHERE TRIM(dni) = '${dniTrim}'
 ORDER BY rowid DESC
 `.trim();
+
+  try {
+    const { stdout } = await execFileAsync('afix_select', [sqlCli], { timeout: 15000 });
+    // Formato: "rowid|cli|ras|dni"
+    const lines = stdout
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l && !l.startsWith('[AFIX]') && !l.includes('Database') && !l.includes('row(s) unloaded.'));
+
+    const data = lines
+      .filter(l => l.includes('|'))
+      .map(l => {
+        const [rowid, cli, ras, dniVal] = l.split('|');
+        return { rowid: Number(rowid), cli, ras, dni: dniVal };
+      });
+
+    return data[0] || null;
+  } catch (err) {
+    const e = new Error(`AFIX_CLI_ERROR: ${err.message}`);
+    e.code = 'AFIX_CLI_ERROR';
+    throw e;
+  }
+
 
     try {
         const { stdout } = await execFileAsync('afix_select', [sqlCli], { timeout: 15000 });
