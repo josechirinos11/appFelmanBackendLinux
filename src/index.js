@@ -17,6 +17,7 @@ const controlAlmacenRoutes= require('./routes/controlAlmacen.router.js');
 const controlOptimaRoutes= require('./routes/controlOptima.routes.js');
 
 const controlAfixRoutes = require('./routes/controlAfix.routes.js');
+const controlAfixLegacyRoutes = require('./routes/control-afix.js');
 
 const path = require('path');
 const rootPath = path.join(__dirname, '..');
@@ -70,6 +71,8 @@ app.use('/control-optima', controlOptimaRoutes);
 
 
 app.use('/control-afix', controlAfixRoutes);
+app.use('/control-afix-legacy', controlAfixLegacyRoutes);
+
 //app.use('/control-access-windows', controlAccessWindowsRoutes);
 
 
