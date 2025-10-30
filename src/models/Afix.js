@@ -1,67 +1,48 @@
-// src/models/Afix.js
-const { query } = require('../config/databaseInformix');
+// src/config/databaseInformix.js
+// Carga perezosa (lazy) del driver para que la app no crashee al iniciar.
+// Solo se intentará cargar ibm_db cuando realmente haga falta abrir conexión.
 
-/**
- * Normaliza el patrón para MATCHES.
- * - Acepta '*' y '?' del usuario tal cual (MATCHES usa esos comodines).
- * - Si el usuario no pone comodín, añadimos '*' al final para “prefijo”.
- */
-function toMatchesPattern(text) {
-  let p = (text || '').trim();
-  if (!p) return null;
-  if (!/[*?]/.test(p)) p = p + '*';
-  return p;
+let ibmdb = null;
+let driverReady = false;
+
+try {
+  // En SLES12 el binario de ibm_db puede exigir GLIBC>=2.32 y fallar.
+  ibmdb = require('ibm_db');
+  driverReady = true;
+} catch (e) {
+  console.warn('[Informix] ibm_db no disponible en este host:', e.message);
+  driverReady = false;
 }
 
-async function searchClientesByRazonSocial(text, { limit = 50, offset = 0 } = {}) {
-  const pattern = toMatchesPattern(text);
-  if (!pattern) return [];
-
-  // Sin SKIP/LIMIT por compatibilidad: paginamos en memoria.
-  const sql = `
-    SELECT cli, ras, dni, rowid
-    FROM cli
-    WHERE ras MATCHES ?
-    ORDER BY ras
-  `;
-  const all = await query(sql, [pattern]);
-  const from = Number(offset) || 0;
-  const to = from + (Number(limit) || 50);
-  return all.slice(from, to);
-}
-
-async function getClienteByDni(dni) {
-  // Sin FIRST: ordeno por rowid y tomo el primero en JS.
-  const sql = `
-    SELECT cli, ras, dni, rowid
-    FROM cli
-    WHERE dni = ?
-    ORDER BY rowid DESC
-  `;
-  const rows = await query(sql, [dni]);
-  return rows[0] || null;
-}
-
-/**
- * Últimos N por rowid (compatible sin FIRST/LIMIT).
- * Usa subconsulta correlacionada y luego ordena (asc|desc).
- */
-async function getLatestClientes(limit = 10, order = 'desc') {
-  const inner = `
-    SELECT c1.cli, c1.ras, c1.dni, c1.rowid
-    FROM cli c1
-    WHERE ? > (SELECT COUNT(*) FROM cli c2 WHERE c2.rowid > c1.rowid)
-  `;
-  const sql = `
-    SELECT cli, ras, dni, rowid
-    FROM ( ${inner} ) t
-    ORDER BY rowid ${order.toLowerCase() === 'asc' ? 'ASC' : 'DESC'}
-  `;
-  return query(sql, [Number(limit)]);
-}
-
-module.exports = {
-  searchClientesByRazonSocial,
-  getClienteByDni,
-  getLatestClientes,
+const CFG = {
+  // Ajusta tu cadena real de conexión Informix si ya la tienes en .env
+  connStr:
+    process.env.INFORMIX_CONNSTR ||
+    'DRIVER={IBM INFORMIX ODBC DRIVER};SERVER=your_server;DATABASE=your_db;HOST=your_host;SERVICE=9088;UID=your_user;PWD=your_pwd;PROTOCOL=onsoctcp;',
 };
+
+async function getConnection() {
+  if (!driverReady || !ibmdb) {
+    const err = new Error(
+      'ibm_db no instalado o incompatible (GLIBC). Este host no puede abrir conexión Informix ahora.'
+    );
+    err.code = 'INFORMIX_DRIVER_MISSING';
+    throw err;
+  }
+  return ibmdb.open(CFG.connStr);
+}
+
+// ✅ Compatibilidad con código existente que usa db.query(sql, params)
+async function query(sql, params = []) {
+  const conn = await getConnection(); // Esto lanzará INFORMIX_DRIVER_MISSING si no hay driver
+  try {
+    const rows = await new Promise((resolve, reject) => {
+      conn.query(sql, params, (err, rs) => (err ? reject(err) : resolve(rs || [])));
+    });
+    return rows;
+  } finally {
+    try { conn.close(() => {}); } catch {}
+  }
+}
+
+module.exports = { getConnection, query, driverReady, CFG };
