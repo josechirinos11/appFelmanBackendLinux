@@ -34,4 +34,17 @@ async function getConnection() {
   return ibmdb.open(CFG.connStr);
 }
 
-module.exports = { getConnection, driverReady, CFG };
+// ✅ Compatibilidad con código existente que usa db.query(sql, params)
+async function query(sql, params = []) {
+  const conn = await getConnection(); // Lanzará INFORMIX_DRIVER_MISSING si no hay driver
+  try {
+    const rows = await new Promise((resolve, reject) => {
+      conn.query(sql, params, (err, rs) => (err ? reject(err) : resolve(rs || [])));
+    });
+    return rows;
+  } finally {
+    try { conn.close(() => {}); } catch {}
+  }
+}
+
+module.exports = { getConnection, query, driverReady, CFG };
