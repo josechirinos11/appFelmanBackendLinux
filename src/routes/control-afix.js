@@ -8,6 +8,9 @@ router.get('/healthz', (_req, res) => {
   res.json({ ok: true, service: 'control-afix', time: new Date().toISOString(), pid: process.pid });
 });
 
+
+
+
 // GET /control-afix/cli/search?text=CRISTALERIA* [&limit=50&offset=0]
 router.get('/cli/search', async (req, res) => {
   try {
@@ -47,6 +50,16 @@ router.get('/cli/latest', async (req, res) => {
     return res.json({ status: 'ok', count: rows.length, rows });
   } catch (err) {
     return res.status(500).json({ status: 'error', error: String(err.message || err) });
+  }
+});
+
+// DEBUG: ver qué exporta el modelo en runtime
+router.get('/__debug/afix-exports', (_req, res) => {
+  try {
+    const Afix = require('../models/Afix');
+    res.json({ ok: true, keys: Object.keys(Afix) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
   }
 });
 
