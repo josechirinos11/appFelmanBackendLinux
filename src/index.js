@@ -70,8 +70,8 @@ function runAfixSelect(sql) {
     sqlhostsExists: fs.existsSync(path.join(envInformix.INFORMIXDIR, 'etc', 'sqlhosts')),
   });
 
-  // BD + alias de servidor (fuerza resolución vía sqlhosts)
-  const DBNAME = 'apli01@afix4_pip';
+ // En Informix SE, 'database' NO admite @server; el server lo marca INFORMIXSERVER
+const DBNAME = 'apli01';
 
   // === Archivos temporales ===
   const pid = process.pid;
