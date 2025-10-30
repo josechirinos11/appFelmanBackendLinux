@@ -60,7 +60,7 @@ function runAfixSelect(sql) {
   const dbaccessCandidate = path.join(INFORMIXDIR, 'bin', 'dbaccess');
   const dbaccessBin = fs.existsSync(dbaccessCandidate) ? dbaccessCandidate : '/usr/bin/dbaccess';
 
-  // === LOGS previos para depurar ===
+  // Logs de arranque
   console.log('[AFIX] cfg', {
     INFORMIXDIR: envInformix.INFORMIXDIR,
     INFORMIXSERVER: envInformix.INFORMIXSERVER,
@@ -70,8 +70,8 @@ function runAfixSelect(sql) {
     sqlhostsExists: fs.existsSync(path.join(envInformix.INFORMIXDIR, 'etc', 'sqlhosts')),
   });
 
- // En Informix SE, 'database' NO admite @server; el server lo marca INFORMIXSERVER
-const DBNAME = 'apli01';
+  // === DB objetivo ===
+  const DBNAME = 'apli01';
 
   // === Archivos temporales ===
   const pid = process.pid;
@@ -79,31 +79,25 @@ const DBNAME = 'apli01';
   const sqlFile = `/tmp/node_afix_${pid}_${rnd}.sql`;
   const outFile = `/tmp/node_afix_${pid}_${rnd}.out`;
 
+  // Script SIN "database ...": igual que hacía afix_select, pero a archivo
   const sqlBody = String(sql).trim();
-
-  // Importante: forzar "database apli01@afix4_pip;"
   const script = `
-database ${DBNAME};
-
 unload to '${outFile}' delimiter '|'
 ${sqlBody}
 ;`.trim() + '\n';
 
   fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
-
   console.log('[AFIX] sqlFile written', { sqlFile, outFile, bytes: script.length });
 
   return new Promise((resolve, reject) => {
     const start = Date.now();
-
-    // Timer de seguridad
     let child;
-    const killTimer = setTimeout(() => {
-      try { child && child.kill('SIGKILL'); } catch {}
-    }, 15000);
 
-    // ⚠️ SIN pasar DBNAME como arg; el script ya lo contiene.
-    child = spawn(dbaccessBin, ['-e', sqlFile], {
+    // Hard kill por si se queda colgado
+    const killTimer = setTimeout(() => { try { child && child.kill('SIGKILL'); } catch {} }, 15000);
+
+    // ⚠️ Pasamos el DBNAME como argumento, SIN database en el script
+    child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], {
       env: { ...process.env, ...envInformix },
     });
 
@@ -114,7 +108,6 @@ ${sqlBody}
 
     child.on('close', code => {
       clearTimeout(killTimer);
-      const ms = Date.now() - start;
 
       // Intentar leer payload
       let payload = '';
@@ -132,7 +125,7 @@ ${sqlBody}
       try { fs.unlinkSync(outFile); } catch {}
 
       console.log('[AFIX] dbaccess:close', {
-        code, ms,
+        code, ms: Date.now() - start,
         stdout_len: out.length,
         stderr_len: err.length,
         outFileSize
@@ -152,6 +145,7 @@ ${sqlBody}
     });
   });
 }
+
 
 
 
