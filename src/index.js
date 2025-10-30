@@ -22,6 +22,8 @@ const controlAfixLegacyRoutes = require('./routes/control-afix.js');
 const path = require('path');
 const rootPath = path.join(__dirname, '..');
 
+const { spawn } = require('child_process');
+
 
 //const controlAccessWindowsRoutes = require('./routes/controlAccessWindows.routes.js');
 
@@ -70,8 +72,57 @@ app.use('/control-almacen', controlAlmacenRoutes);
 app.use('/control-optima', controlOptimaRoutes);
 
 
-app.use('/control-afix', controlAfixRoutes);
-app.use('/control-afix-legacy', controlAfixLegacyRoutes);
+//app.use('/control-afix', controlAfixRoutes);
+//app.use('/control-afix-legacy', controlAfixLegacyRoutes);
+app.get('/control-afix/cli/by-dni', (req, res) => {
+  try {
+    const dni = (req.query.dni || '').trim();
+
+    // Validación fuerte para evitar inyección por shell/SQL (solo letras/números)
+    if (!/^[A-Za-z0-9]+$/.test(dni)) {
+      return res.status(400).json({ ok: false, error: 'dni inválido' });
+    }
+
+    // Selecciona columnas útiles y estables
+    const sql = `
+      select rowid, ras, dni, te1, e_mail
+      from cli
+      where dni = '${dni}'
+    `;
+
+    const child = spawn('/usr/local/bin/afix_select', [sql], {
+      env: process.env,
+    });
+
+    let out = '';
+    let err = '';
+
+    child.stdout.on('data', (chunk) => (out += chunk.toString('utf8')));
+    child.stderr.on('data', (chunk) => (err += chunk.toString('utf8')));
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        return res.status(500).json({ ok: false, error: 'afix_select falló', detail: err.trim() });
+      }
+
+      // afix_select devuelve filas delimitadas por '|', sin cabeceras, una por línea
+      // Ej: rowid|ras|dni|te1|e_mail
+      const lines = out
+        .split('\n')
+        .map(s => s.trim())
+        .filter(s => s && !/^Database (selected|closed)\./i.test(s) && !/row\(s\) unloaded/i.test(s));
+
+      const data = lines.map(line => {
+        const [rowid, ras, dniVal, te1, email] = line.split('|');
+        return { rowid, ras, dni: dniVal, telefono: te1, email };
+      });
+
+      return res.json({ ok: true, count: data.length, data });
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message || String(e) });
+  }
+});
 
 //app.use('/control-access-windows', controlAccessWindowsRoutes);
 
