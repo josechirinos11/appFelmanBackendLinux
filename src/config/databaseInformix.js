@@ -15,21 +15,33 @@ try {
   driverReady = false;
 }
 
+// ✅ Configuración para Informix SE con dbaccess
 const CFG = {
-  // Ajusta a tu cadena real de conexión Informix si ya la tienes en .env
+  // Conexión basada en tu sqlhosts: afix4_tcp sesoctcp felman sqlexec
   connStr:
     process.env.INFORMIX_CONNSTR ||
-    'DRIVER={IBM INFORMIX ODBC DRIVER};SERVER=your_server;DATABASE=your_db;HOST=your_host;SERVICE=9088;UID=your_user;PWD=your_pwd;PROTOCOL=onsoctcp;',
+    'DRIVER={IBM INFORMIX ODBC DRIVER};SERVER=afix4_tcp;DATABASE=apli01;HOST=felman;SERVICE=sqlexec;PROTOCOL=onsoctcp;',
+  
+  // Variables de entorno necesarias (deben estar en .env o sistema)
+  INFORMIXDIR: process.env.INFORMIXDIR || '/home/ix730',
+  INFORMIXSERVER: process.env.INFORMIXSERVER || 'afix4_tcp',
+  DBPATH: process.env.DBPATH || '/home/af5/dat/afix4/dbs:/home/af5/dat/afix4/dbs.20250618:/home/ix730/etc',
 };
 
 async function getConnection() {
   if (!driverReady || !ibmdb) {
     const err = new Error(
-      'ibm_db no instalado o incompatible (GLIBC). Este host no puede abrir conexión Informix ahora.'
+      'ibm_db no instalado o incompatible (GLIBC). Este host usa fallback CLI.'
     );
     err.code = 'INFORMIX_DRIVER_MISSING';
     throw err;
   }
+  
+  // Configurar variables de entorno antes de conectar
+  process.env.INFORMIXDIR = CFG.INFORMIXDIR;
+  process.env.INFORMIXSERVER = CFG.INFORMIXSERVER;
+  process.env.DBPATH = CFG.DBPATH;
+  
   // Abre conexión on-demand
   return ibmdb.open(CFG.connStr);
 }

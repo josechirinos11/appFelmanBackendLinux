@@ -19,16 +19,17 @@ async function getClienteByDni(dni) {
   // 1) Camino normal (driver ibm_db)
   if (driverReady) {
     // ⚠️ Informix SE NO soporta FIRST, usamos subquery con MAX(rowid)
+    // ⚠️ La tabla cli solo tiene columna 'dni' (no nif ni cif)
     const sql = `
       SELECT *
       FROM cli
-      WHERE (TRIM(dni) = ? OR TRIM(nif) = ? OR TRIM(cif) = ?)
+      WHERE TRIM(dni) = ?
         AND rowid = (
           SELECT MAX(rowid) FROM cli 
-          WHERE TRIM(dni) = ? OR TRIM(nif) = ? OR TRIM(cif) = ?
+          WHERE TRIM(dni) = ?
         )
     `;
-    const rows = await query(sql, [dniTrim, dniTrim, dniTrim, dniTrim, dniTrim, dniTrim]);
+    const rows = await query(sql, [dniTrim, dniTrim]);
     return rows[0] || null;
   }
 
