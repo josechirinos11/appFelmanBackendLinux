@@ -1,48 +1,39 @@
-// src/config/databaseInformix.js
-// Carga perezosa (lazy) del driver para que la app no crashee al iniciar.
-// Solo se intentará cargar ibm_db cuando realmente haga falta abrir conexión.
+// src/models/Afix.js
+// Modelo Afix: expone funciones que usan la capa Informix (query)
+// Nota: Informix usa `SELECT FIRST 1 ...` en vez de `LIMIT 1`.
 
-let ibmdb = null;
-let driverReady = false;
+const { query, driverReady } = require('../config/databaseInformix');
 
-try {
-  // En SLES12 el binario de ibm_db puede exigir GLIBC>=2.32 y fallar.
-  ibmdb = require('ibm_db');
-  driverReady = true;
-} catch (e) {
-  console.warn('[Informix] ibm_db no disponible en este host:', e.message);
-  driverReady = false;
+/**
+ * Obtiene un cliente por DNI/NIF/CIF exacto (trim).
+ * Devuelve: objeto del cliente o null.
+ * Lanza: Error con code=INFORMIX_DRIVER_MISSING si el driver no está disponible.
+ */
+async function getClienteByDni(dni) {
+  if (!dni) {
+    const e = new Error('Parámetro dni es requerido');
+    e.code = 'BAD_REQUEST';
+    throw e;
+  }
+
+  // Ajusta el nombre de la tabla/campos según tu esquema real de Informix.
+  // He usado 'cli' como tabla típica de clientes y posibles campos nif/dni/cif.
+  const sql = `
+    SELECT FIRST 1 *
+    FROM cli
+    WHERE TRIM(nif) = ? OR TRIM(dni) = ? OR TRIM(cif) = ?
+  `;
+
+  const rows = await query(sql, [dni, dni, dni]);
+  return rows[0] || null;
 }
 
-const CFG = {
-  // Ajusta tu cadena real de conexión Informix si ya la tienes en .env
-  connStr:
-    process.env.INFORMIX_CONNSTR ||
-    'DRIVER={IBM INFORMIX ODBC DRIVER};SERVER=your_server;DATABASE=your_db;HOST=your_host;SERVICE=9088;UID=your_user;PWD=your_pwd;PROTOCOL=onsoctcp;',
+/** Para health/debug: indica si el driver está cargado en este host */
+function driverStatus() {
+  return { driverReady };
+}
+
+module.exports = {
+  getClienteByDni,
+  driverStatus,
 };
-
-async function getConnection() {
-  if (!driverReady || !ibmdb) {
-    const err = new Error(
-      'ibm_db no instalado o incompatible (GLIBC). Este host no puede abrir conexión Informix ahora.'
-    );
-    err.code = 'INFORMIX_DRIVER_MISSING';
-    throw err;
-  }
-  return ibmdb.open(CFG.connStr);
-}
-
-// ✅ Compatibilidad con código existente que usa db.query(sql, params)
-async function query(sql, params = []) {
-  const conn = await getConnection(); // Esto lanzará INFORMIX_DRIVER_MISSING si no hay driver
-  try {
-    const rows = await new Promise((resolve, reject) => {
-      conn.query(sql, params, (err, rs) => (err ? reject(err) : resolve(rs || [])));
-    });
-    return rows;
-  } finally {
-    try { conn.close(() => {}); } catch {}
-  }
-}
-
-module.exports = { getConnection, query, driverReady, CFG };
