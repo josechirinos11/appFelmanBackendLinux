@@ -39,29 +39,41 @@ const DatabaseMonitor = require('./monitoreos/database-monitor');
 
 
 function runAfixSelect(sql) {
-  // Ejecuta bajo bash -lc para poder "source ~/.afix_env.sh"
   const { spawn } = require('child_process');
 
-  // Escapado mínimo para comillas simples en SQL
+  // Escapar comillas simples dentro del SQL
   const safeSql = String(sql).replace(/'/g, `'\\''`);
 
-  // Comando: cargar entorno y ejecutar
-  const bashCmd = `source ~/.afix_env.sh && /usr/local/bin/afix_select '${safeSql}'`;
+  // Determinar HOME de forma robusta (systemd a veces no lo pasa)
+  const HOME = process.env.HOME || '/home/deploy_felman';
+  const ENV_FILE = `${HOME}/.afix_env.sh`;
 
-  const child = spawn('/bin/bash', ['-lc', bashCmd], {
-    env: process.env, // por si además defines variables en systemd/pm2
-  });
+  // Elegir timeout disponible (/usr/bin/timeout o /bin/timeout)
+  const timeoutCmd = `$(command -v timeout || command -v /usr/bin/timeout || command -v /bin/timeout)`;
+
+  // Reducir bloqueos de conexión si el listener tarda
+  // INFORMIXCONTIME: segundos de espera de conexión; INFORMIXCONRETRY: reintentos
+  const bashCmd = `
+    set -e
+    export HOME='${HOME}'
+    [ -f '${ENV_FILE}' ] && source '${ENV_FILE}'
+    export INFORMIXCONTIME=5
+    export INFORMIXCONRETRY=1
+    ${timeoutCmd} 8s /usr/local/bin/afix_select '${safeSql}'
+  `.trim();
+
+  const child = spawn('/bin/bash', ['-lc', bashCmd], { env: process.env });
 
   let out = '';
   let err = '';
-  child.stdout.on('data', (c) => (out += c.toString('utf8')));
-  child.stderr.on('data', (c) => (err += c.toString('utf8')));
+  child.stdout.on('data', c => (out += c.toString('utf8')));
+  child.stderr.on('data', c => (err += c.toString('utf8')));
 
   return new Promise((resolve, reject) => {
-    child.on('close', (code) => {
+    child.on('close', code => {
       if (code !== 0) {
-        // Muchos errores de Informix SE vienen por stdout; exponemos ambos
-        const detail = (err || out || '').trim();
+        // Si fue timeout, el código típico es 124 (GNU coreutils)
+        const detail = (err || out || '').trim() || (code === 124 ? 'timeout 8s' : '');
         return reject(new Error(detail || `afix_select exited with code ${code}`));
       }
       resolve(out);
@@ -180,6 +192,19 @@ app.get('/control-afix/cli/by-dni', async (req, res) => {
 
 
 
+// --- HEALTH: no toca Informix, responde inmediato
+app.get('/control-afix/healthz', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'control-afix',
+    time: new Date().toISOString(),
+    pid: process.pid
+  });
+});
+
+
+
+
 
 
 // Para rutas SPA (React Native Web)
@@ -191,15 +216,7 @@ app.get('*', (req, res) => {
 });
 
 
-// --- HEALTH: no toca Informix, responde inmediato
-app.get('/control-afix/healthz', (req, res) => {
-  res.json({
-    ok: true,
-    service: 'control-afix',
-    time: new Date().toISOString(),
-    pid: process.pid
-  });
-});
+
 
 
 
