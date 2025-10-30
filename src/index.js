@@ -39,15 +39,18 @@ const DatabaseMonitor = require('./monitoreos/database-monitor');
 
 
 
+
 function runAfixSelect(sql) {
   const { spawn } = require('child_process');
   const fs = require('fs');
   const path = require('path');
 
-  // === ENTORNO INFORMIX MÍNIMO (tu servidor) ===
+  // === ENTORNO INFORMIX (según ~/.afix_env.sh y lo que vimos) ===
   const envInformix = {
     INFORMIXDIR: '/home/ix730',
-    INFORMIXSERVER: 'afix4_pip',
+    INFORMIXSERVER: 'afix4_tcp', // << corregido
+    DBPATH: '/home/af5/dat/afix4/dbs:/home/af5/dat/afix4/dbs.20250618:/home/ix730/etc', // << añadido
+    DBTEMP: '/home/tmp',
     CLIENT_LOCALE: 'es_es.8859-1',
     DB_LOCALE: 'es_es.8859-1',
     DBDATE: 'DMY4/',
@@ -56,22 +59,22 @@ function runAfixSelect(sql) {
     PATH: `${process.env.PATH || ''}:/home/ix730/bin:/home/ix730/lib`,
   };
 
-  const INFORMIXDIR = envInformix.INFORMIXDIR;
-  const dbaccessCandidate = path.join(INFORMIXDIR, 'bin', 'dbaccess');
-  const dbaccessBin = fs.existsSync(dbaccessCandidate) ? dbaccessCandidate : '/usr/bin/dbaccess';
+  const dbaccessBin = fs.existsSync('/home/ix730/bin/dbaccess')
+    ? '/home/ix730/bin/dbaccess'
+    : '/usr/bin/dbaccess';
 
   // Logs de arranque
   console.log('[AFIX] cfg', {
     INFORMIXDIR: envInformix.INFORMIXDIR,
     INFORMIXSERVER: envInformix.INFORMIXSERVER,
+    DBPATH: envInformix.DBPATH,
     dbaccessBin,
     dbaccessExists: fs.existsSync(dbaccessBin),
-    sqlhosts: path.join(envInformix.INFORMIXDIR, 'etc', 'sqlhosts'),
-    sqlhostsExists: fs.existsSync(path.join(envInformix.INFORMIXDIR, 'etc', 'sqlhosts')),
+    sqlhosts: '/home/ix730/etc/sqlhosts',
+    sqlhostsExists: fs.existsSync('/home/ix730/etc/sqlhosts'),
   });
 
-  // === DB objetivo ===
-  const DBNAME = 'apli01';
+  const DBNAME = 'apli01'; // SE resuelve vía DBPATH + INFORMIXSERVER
 
   // === Archivos temporales ===
   const pid = process.pid;
@@ -79,11 +82,10 @@ function runAfixSelect(sql) {
   const sqlFile = `/tmp/node_afix_${pid}_${rnd}.sql`;
   const outFile = `/tmp/node_afix_${pid}_${rnd}.out`;
 
-  // Script SIN "database ...": igual que hacía afix_select, pero a archivo
-  const sqlBody = String(sql).trim();
+  // Script SIN "database ...", como hacía afix_select
   const script = `
 unload to '${outFile}' delimiter '|'
-${sqlBody}
+${String(sql).trim()}
 ;`.trim() + '\n';
 
   fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
@@ -93,10 +95,9 @@ ${sqlBody}
     const start = Date.now();
     let child;
 
-    // Hard kill por si se queda colgado
     const killTimer = setTimeout(() => { try { child && child.kill('SIGKILL'); } catch {} }, 15000);
 
-    // ⚠️ Pasamos el DBNAME como argumento, SIN database en el script
+    // dbaccess -e apli01 /tmp/script.sql  (SE usa DBPATH + INFORMIXSERVER)
     child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], {
       env: { ...process.env, ...envInformix },
     });
@@ -109,7 +110,6 @@ ${sqlBody}
     child.on('close', code => {
       clearTimeout(killTimer);
 
-      // Intentar leer payload
       let payload = '';
       let outFileSize = 0;
       try {
