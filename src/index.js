@@ -37,6 +37,8 @@ const DatabaseMonitor = require('./monitoreos/database-monitor');
 
 
 
+
+
 function runAfixSelect(sql) {
   const { spawn } = require('child_process');
   const fs = require('fs');
@@ -54,14 +56,22 @@ function runAfixSelect(sql) {
     PATH: `${process.env.PATH || ''}:/home/ix730/bin:/home/ix730/lib`,
   };
 
-  // === Paths y binario dbaccess ===
   const INFORMIXDIR = envInformix.INFORMIXDIR;
-  const dbaccessBin = fs.existsSync(path.join(INFORMIXDIR, 'bin', 'dbaccess'))
-    ? path.join(INFORMIXDIR, 'bin', 'dbaccess')
-    : '/usr/bin/dbaccess'; // fallback si está en PATH
+  const dbaccessCandidate = path.join(INFORMIXDIR, 'bin', 'dbaccess');
+  const dbaccessBin = fs.existsSync(dbaccessCandidate) ? dbaccessCandidate : '/usr/bin/dbaccess';
 
-  // === DB objetivo (vimos en logs: apli01) ===
-  const DBNAME = 'apli01';
+  // === LOGS previos para depurar ===
+  console.log('[AFIX] cfg', {
+    INFORMIXDIR: envInformix.INFORMIXDIR,
+    INFORMIXSERVER: envInformix.INFORMIXSERVER,
+    dbaccessBin,
+    dbaccessExists: fs.existsSync(dbaccessBin),
+    sqlhosts: path.join(envInformix.INFORMIXDIR, 'etc', 'sqlhosts'),
+    sqlhostsExists: fs.existsSync(path.join(envInformix.INFORMIXDIR, 'etc', 'sqlhosts')),
+  });
+
+  // BD + alias de servidor (fuerza resolución vía sqlhosts)
+  const DBNAME = 'apli01@afix4_pip';
 
   // === Archivos temporales ===
   const pid = process.pid;
@@ -69,71 +79,79 @@ function runAfixSelect(sql) {
   const sqlFile = `/tmp/node_afix_${pid}_${rnd}.sql`;
   const outFile = `/tmp/node_afix_${pid}_${rnd}.out`;
 
-  // Limpia comillas en SQL para el script
   const sqlBody = String(sql).trim();
 
-  // Script para dbaccess: selecciona BD y hace UNLOAD a un archivo normal
+  // Importante: forzar "database apli01@afix4_pip;"
   const script = `
 database ${DBNAME};
 
 unload to '${outFile}' delimiter '|'
 ${sqlBody}
-;`;
+;`.trim() + '\n';
 
-  // Escribimos el SQL en /tmp
   fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
 
-  // Ejecutamos: dbaccess -e <dbname> <sqlfile>
-  // Nota: pasamos el DBNAME también como argumento aunque esté en el script.
-  return new Promise((resolve, reject) => {
-    // Timer de seguridad (hard kill)
-    const killTimer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch {}
-    }, 12000); // 12s
+  console.log('[AFIX] sqlFile written', { sqlFile, outFile, bytes: script.length });
 
-    const child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+
+    // Timer de seguridad
+    let child;
+    const killTimer = setTimeout(() => {
+      try { child && child.kill('SIGKILL'); } catch {}
+    }, 15000);
+
+    // ⚠️ SIN pasar DBNAME como arg; el script ya lo contiene.
+    child = spawn(dbaccessBin, ['-e', sqlFile], {
       env: { ...process.env, ...envInformix },
     });
 
     let out = '';
     let err = '';
-
     child.stdout.on('data', c => out += c.toString('utf8'));
     child.stderr.on('data', c => err += c.toString('utf8'));
 
     child.on('close', code => {
       clearTimeout(killTimer);
+      const ms = Date.now() - start;
 
-      // Leer resultado si existe
+      // Intentar leer payload
       let payload = '';
+      let outFileSize = 0;
       try {
         if (fs.existsSync(outFile)) {
-          payload = fs.readFileSync(outFile, 'utf8');
+          const buf = fs.readFileSync(outFile);
+          outFileSize = buf.length;
+          payload = buf.toString('utf8');
         }
-      } catch (e) {
-        // ignora; lo reportamos abajo si hace falta
-      } finally {
-        // Limpieza de temporales
-        try { fs.unlinkSync(sqlFile); } catch {}
-        try { fs.unlinkSync(outFile); } catch {}
-      }
+      } catch (_) {}
+
+      // Limpieza
+      try { fs.unlinkSync(sqlFile); } catch {}
+      try { fs.unlinkSync(outFile); } catch {}
+
+      console.log('[AFIX] dbaccess:close', {
+        code, ms,
+        stdout_len: out.length,
+        stderr_len: err.length,
+        outFileSize
+      });
 
       if (code !== 0) {
         const detail = (err || out || '').trim();
         return reject(new Error(detail || `dbaccess exited with code ${code}`));
       }
 
-      // Si dbaccess fue ok pero no hay payload, reporta algo útil
       if (!payload) {
-        const detail = (err || out || '').trim();
-        return reject(new Error(detail || 'dbaccess ok pero sin datos (payload vacío)'));
+        const detail = (err || out || '').trim() || 'dbaccess ok pero sin datos';
+        return reject(new Error(detail));
       }
 
       resolve(payload);
     });
   });
 }
-
 
 
 
