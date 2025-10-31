@@ -1,0 +1,22 @@
+PS C:\WINDOWS\system32> Invoke-RestMethod -Uri 'http://85.59.105.234:3000/control-afix/cli/by-dni?dni=B46388690' | ConvertTo-Json -Depth 5
+{
+    "ok":  true,
+    "count":  2,
+    "data":  [
+                 {
+                     "rowid":  "1",
+                     "ras":  "TALLERES J.CONCEPCION,S.L --99--",
+                     "dni":  "B46388690",
+                     "telefono":  "963910424",
+                     "email":  " "
+                 },
+                 {
+                     "rowid":  "3485",
+                     "ras":  "TALLERES J. CONCEPCION, S.L. --99--",
+                     "dni":  "B46388690",
+                     "telefono":  "963910424",
+                     "email":  "info@talleresjconcepcion.com"
+                 }
+             ]
+}
+PS C:\WINDOWS\system32>
