@@ -283,6 +283,82 @@ router.post('/info-para-terminales', async (req, res, next) => {
   }
 });
 
+// Ruta para obtener información detallada con costos para terminales
+router.post('/info-para-terminales-costes', async (req, res, next) => {
+  const { codigoPresupuesto } = req.body;
+  
+  // Validar parámetros
+  if (!codigoPresupuesto) {
+    return res.status(400).json({ 
+      status: 'error', 
+      message: 'Falta el parámetro codigoPresupuesto' 
+    });
+  }
+
+  try {
+    // 1. Obtener ClienteNombre de fpresupuestos
+    const [clienteRows] = await pool.execute(
+      `SELECT ClienteNombre 
+       FROM z_felman2023.fpresupuestos 
+       WHERE NumeroManual = ?`,
+      [codigoPresupuesto]
+    );
+
+    if (clienteRows.length === 0) {
+      return res.status(404).json({ 
+        status: 'error', 
+        message: 'No se encontró el presupuesto con el código proporcionado' 
+      });
+    }
+
+    const clienteNombre = clienteRows[0].ClienteNombre;
+
+    // 2. Obtener información detallada con costos de fpresupuestoslineas y fPresupuestosLineasComponentes
+    const [lineasRows] = await pool.execute(
+      `SELECT
+        l.Serie1Desc,
+        l.CodigoSerie,
+        l.CodigoNumero,
+        l.Modulo,
+        c.Linea,
+        CAST(ROUND(SUM(c.Coste + c.Desperdicio), 2) AS DECIMAL(18,2)) AS CosteTotal
+      FROM z_felman2023.fpresupuestoslineas AS l
+      JOIN z_felman2023.fPresupuestosLineasComponentes AS c
+        ON c.CodigoSerie = l.CodigoSerie
+       AND c.CodigoNumero = l.CodigoNumero
+       AND c.Linea = l.Linea
+      WHERE l.PresupNumMan = ?
+        AND c.CodigoFamilia <> ''
+        AND c.Coste > 0
+      GROUP BY
+        l.Serie1Desc, l.CodigoSerie, l.CodigoNumero, l.Modulo, c.Linea
+      HAVING SUM(c.Coste + c.Desperdicio) > 0
+      ORDER BY
+        c.Linea`,
+      [codigoPresupuesto]
+    );
+
+    // 3. Preparar respuesta
+    const response = {
+      status: 'ok',
+      codigoPresupuesto,
+      clienteNombre,
+      modulos: lineasRows
+    };
+
+    return res.status(200).json(response);
+    
+  } catch (error) {
+    console.error('❌ ERROR EN /info-para-terminales-costes:', error);
+    return res.status(500).json({ 
+      status: 'error', 
+      message: 'Error al consultar la información de costos', 
+      detail: error.message,
+      sqlMessage: error.sqlMessage
+    });
+  }
+});
+
 // ...existing code...
 
 /**
