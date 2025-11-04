@@ -252,6 +252,45 @@ app.get('/control-afix/cli/by-dni', async (req, res) => {
     return res.status(500).json({ ok: false, error: 'afix_select falló', detail: e.message });
   }
 });
+// Ej: GET /control-afix/cli/search?text=CRISTALERIA%2A
+app.get('/control-afix/cli/search', async (req, res) => {
+  try {
+    let text = (req.query.text || '').trim();
+
+    // Validación: solo letras, números, espacios, .-_/ y comodines * ?
+    if (!/^[A-Za-z0-9 \.\-_/*\?]+$/.test(text)) {
+      return res.status(400).json({ ok: false, error: 'text inválido' });
+    }
+
+    // Normalizamos doble espacio y recortamos
+    text = text.replace(/\s+/g, ' ').toUpperCase();
+
+    // SQL: ras MATCHES 'PATRÓN' (usa * y ?)
+    const sql = `
+      select first 50 rowid, ras, dni, te1, e_mail
+      from cli
+      where upper(ras) matches '${text}'
+      order by ras
+    `;
+
+    const raw = await runAfixSelect(sql);
+
+    const lines = raw
+      .split('\n')
+      .map(s => s.trim())
+      .filter(s => s && !/^Database (selected|closed)\./i.test(s) && !/row\(s\) unloaded/i.test(s));
+
+    const data = lines.map(line => {
+      const [rowid, ras, dni, te1, email] = line.split('|');
+      return { rowid, ras, dni, telefono: te1, email };
+    });
+
+    return res.json({ ok: true, count: data.length, data });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'afix_select falló', detail: e.message });
+  }
+});
+
 
 
 //app.use('/control-access-windows', controlAccessWindowsRoutes);
