@@ -600,6 +600,64 @@ router.post('/consultaMAYOR', async (req, res) => {
   }
 });
 
+
+// Ruta GET /tareas: recibe codigoserie y codigonumero, devuelve secciones de TxtCliente
+router.get('/tareas', async (req, res) => {
+  const { codigoserie, codigonumero } = req.query;
+  if (!codigoserie || !codigonumero) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Faltan parámetros codigoserie y/o codigonumero'
+    });
+  }
+  try {
+    const sql = `
+      SELECT DISTINCT
+        l.CodigoSerie,
+        l.CodigoNumero,
+        l.Linea,
+        SUBSTRING_INDEX(
+          SUBSTRING_INDEX(
+            SUBSTRING_INDEX(l.TxtCliente, '[', nums.n + 1),
+            '[',
+            -1
+          ),
+          ']',
+          1
+        ) AS Seccion
+      FROM fpresupuestoslineas AS l
+      JOIN (
+        SELECT d1.n + d10.n * 10 + 1 AS n
+        FROM (
+          SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+          UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9
+        ) AS d1
+        CROSS JOIN (
+          SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+          UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9
+        ) AS d10
+      ) AS nums
+        ON nums.n <= (LENGTH(l.TxtCliente) - LENGTH(REPLACE(l.TxtCliente, '[', '')))
+      WHERE l.CodigoSerie = ? AND l.CodigoNumero = ?
+        AND SUBSTRING_INDEX(
+              SUBSTRING_INDEX(
+                SUBSTRING_INDEX(l.TxtCliente, '[', nums.n + 1),
+                '[',
+                -1
+              ),
+              ']',
+              1
+            ) <> ''
+      ORDER BY l.Linea, Seccion
+    `;
+    const [rows] = await pool.execute(sql, [codigoserie, codigonumero]);
+    return res.status(200).json({ status: 'ok', data: rows });
+  } catch (error) {
+    console.error('❌ ERROR EN /tareas:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
 module.exports = router;
 
 

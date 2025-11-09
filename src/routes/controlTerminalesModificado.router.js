@@ -1092,4 +1092,162 @@ router.get('/historico-operarios-lotes-actuales', async (req, res) => {
   }
 });
 
+/**
+ * ============================================================================
+ * OPTIMIZACIÓN #8: /promedios-tareas-operarios - SEVERIDAD MEDIA
+ * ============================================================================
+ * 
+ * FUNCIÓN:
+ * - Calcula promedios de tiempo por tarea y operario
+ * - Rango de fecha: último mes (30 días) por defecto
+ * - Incluye estadísticas detalladas y agregaciones
+ * 
+ * CARACTERÍSTICAS:
+ * - Filtrado eficiente en SQL con índices de fecha
+ * - Agrupación por CodigoTarea y OperarioNombre
+ * - Calcula promedio, total, mínimo, máximo y cantidad de registros
+ * - Formato tiempo en HH:MM:SS
+ * 
+ * Query params:
+ * - days: number (default 30, días hacia atrás desde hoy)
+ * - minRegistros: number (default 1, mínimo de registros para incluir en resultado)
+ * ============================================================================
+ */
+router.get('/promedios-tareas-operarios', async (req, res) => {
+  try {
+    const { days = 30, minRegistros = 1 } = req.query;
+
+    // Validar que days sea un número válido
+    const diasAtras = Math.min(Math.max(parseInt(days), 1), 365); // Entre 1 y 365 días
+
+    const sql = `
+      SELECT
+        -- Por Tarea
+        CodigoTarea,
+        COUNT(*) AS TotalRegistros,
+        COUNT(DISTINCT NumeroManual) AS PedidosUnicos,
+        ROUND(AVG(TiempoDedicado), 2) AS PromedioSegundos,
+        SEC_TO_TIME(ROUND(AVG(TiempoDedicado))) AS PromedioTiempo,
+        SEC_TO_TIME(SUM(TiempoDedicado)) AS TiempoTotal,
+        SEC_TO_TIME(MIN(TiempoDedicado)) AS TiempoMinimo,
+        SEC_TO_TIME(MAX(TiempoDedicado)) AS TiempoMaximo,
+        -- Por Operario
+        OperarioNombre,
+        CodigoOperario,
+        COUNT(DISTINCT DATE(Fecha)) AS DiasActivos
+      FROM (
+        -- Histórico (hpartes)
+        SELECT
+          h.Fecha,
+          h.CodigoOperario,
+          h.OperarioNombre,
+          hl.CodigoTarea,
+          hl.NumeroManual,
+          hl.TiempoDedicado
+        FROM hpartes h
+        INNER JOIN hparteslineas hl
+          ON h.Serie = hl.CodigoSerie
+         AND h.Numero = hl.CodigoNumero
+        WHERE h.Fecha >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+          AND h.Fecha <= CURDATE()
+          AND hl.TiempoDedicado IS NOT NULL
+          AND hl.TiempoDedicado > 0
+
+        UNION ALL
+
+        -- Actuales (partes)
+        SELECT
+          p.Fecha,
+          p.CodigoOperario,
+          p.OperarioNombre,
+          pl.CodigoTarea,
+          pl.NumeroManual,
+          pl.TiempoDedicado
+        FROM partes p
+        INNER JOIN parteslineas pl
+          ON p.Serie = pl.CodigoSerie
+         AND p.Numero = pl.CodigoNumero
+        WHERE p.Fecha >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+          AND p.Fecha <= CURDATE()
+          AND pl.TiempoDedicado IS NOT NULL
+          AND pl.TiempoDedicado > 0
+      ) AS datos
+      GROUP BY CodigoTarea, OperarioNombre, CodigoOperario
+      HAVING COUNT(*) >= ?
+      ORDER BY CodigoTarea, PromedioSegundos DESC
+    `;
+
+    const [rows] = await pool.execute(sql, [diasAtras, diasAtras, parseInt(minRegistros)]);
+
+    // Generar resumen estadístico
+    const resumen = {
+      periodoAnalizado: {
+        dias: diasAtras,
+        fechaInicio: new Date(Date.now() - diasAtras * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        fechaFin: new Date().toISOString().split('T')[0]
+      },
+      totales: {
+        registros: rows.reduce((sum, r) => sum + r.TotalRegistros, 0),
+        tareasUnicas: new Set(rows.map(r => r.CodigoTarea)).size,
+        operariosUnicos: new Set(rows.map(r => r.CodigoOperario)).size,
+        pedidosUnicos: new Set(rows.map(r => r.PedidosUnicos)).size
+      },
+      promediosPorTarea: {},
+      promediosPorOperario: {}
+    };
+
+    // Agrupar promedios por tarea
+    rows.forEach(row => {
+      const tarea = row.CodigoTarea || 'SIN_TAREA';
+      if (!resumen.promediosPorTarea[tarea]) {
+        resumen.promediosPorTarea[tarea] = {
+          totalRegistros: 0,
+          pedidosUnicos: 0,
+          operarios: [],
+          promedioGeneral: 0
+        };
+      }
+      resumen.promediosPorTarea[tarea].totalRegistros += row.TotalRegistros;
+      resumen.promediosPorTarea[tarea].pedidosUnicos += row.PedidosUnicos;
+      resumen.promediosPorTarea[tarea].operarios.push({
+        nombre: row.OperarioNombre,
+        promedio: row.PromedioTiempo,
+        registros: row.TotalRegistros
+      });
+    });
+
+    // Agrupar promedios por operario
+    rows.forEach(row => {
+      const operario = row.OperarioNombre || 'SIN_OPERARIO';
+      if (!resumen.promediosPorOperario[operario]) {
+        resumen.promediosPorOperario[operario] = {
+          codigo: row.CodigoOperario,
+          totalRegistros: 0,
+          diasActivos: row.DiasActivos,
+          tareas: []
+        };
+      }
+      resumen.promediosPorOperario[operario].totalRegistros += row.TotalRegistros;
+      resumen.promediosPorOperario[operario].tareas.push({
+        tarea: row.CodigoTarea,
+        promedio: row.PromedioTiempo,
+        registros: row.TotalRegistros
+      });
+    });
+
+    res.status(200).json({
+      status: 'success',
+      resumen: resumen,
+      detalles: rows
+    });
+  } catch (error) {
+    console.error('❌ ERROR EN /control-terminales/promedios-tareas-operarios:', error);
+    res.status(500).json({ 
+      status: 'error', 
+      message: error.message,
+      detail: 'Error al calcular promedios de tareas y operarios'
+    });
+  }
+});
+
 module.exports = router;
