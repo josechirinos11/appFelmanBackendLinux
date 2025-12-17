@@ -185,36 +185,36 @@ router.post('/modulos-info', async (req, res) => {
     const haveCristal = new Set(rowsCristal.map(r => `${r.CodigoSerie}|${r.CodigoNumero}|${r.Linea}`));
 
     // 5) Respuesta: para cada módulo de entrada (PRE), marcamos flags según su FAB mapeado
- // ... tras construir haveSolape, haveGuias, haveCristal
+    // ... tras construir haveSolape, haveGuias, haveCristal
 
-const out = modulos.map(m => {
-  const Serie = String(m.Serie ?? m.serie ?? '').trim();
-  const Numero = Number(m.Numero ?? m.numero ?? m.Num ?? m.num);
-  const Linea  = Number(m.Linea  ?? m.linea);
+    const out = modulos.map(m => {
+      const Serie = String(m.Serie ?? m.serie ?? '').trim();
+      const Numero = Number(m.Numero ?? m.numero ?? m.Num ?? m.num);
+      const Linea = Number(m.Linea ?? m.linea);
 
-  // id PRE (tal como lo recibiste)
-  const preId = `${Serie}-${Numero}-${Linea}`;
+      // id PRE (tal como lo recibiste)
+      const preId = `${Serie}-${Numero}-${Linea}`;
 
-  const fab = pre2fab.get(key(Serie, Numero, Linea));
-  if (!fab) {
-    // sin mapeo: devuelves lo mismo y alias vacío
-    return { id: preId, alias: [preId], solape:false, guias:false, cristal:false };
-  }
+      const fab = pre2fab.get(key(Serie, Numero, Linea));
+      if (!fab) {
+        // sin mapeo: devuelves lo mismo y alias vacío
+        return { id: preId, alias: [preId], solape: false, guias: false, cristal: false };
+      }
 
-  // id FAB canónico
-  const fabId = `${fab.FabSerie}-${fab.FabNumero}-${Linea}`;
+      // id FAB canónico
+      const fabId = `${fab.FabSerie}-${fab.FabNumero}-${Linea}`;
 
-  const pairK = `${fab.FabSerie}|${fab.FabNumero}`;
-  const tripK = `${fab.FabSerie}|${fab.FabNumero}|${Linea}`;
+      const pairK = `${fab.FabSerie}|${fab.FabNumero}`;
+      const tripK = `${fab.FabSerie}|${fab.FabNumero}|${Linea}`;
 
-  return {
-    id: fabId,                 // canónico: FAB
-    alias: [fabId, preId],     // incluye PRE para casar con el front
-    solape:  haveSolape.has(pairK),
-    guias:   haveGuias.has(pairK),
-    cristal: haveCristal.has(tripK)
-  };
-});
+      return {
+        id: fabId,                 // canónico: FAB
+        alias: [fabId, preId],     // incluye PRE para casar con el front
+        solape: haveSolape.has(pairK),
+        guias: haveGuias.has(pairK),
+        cristal: haveCristal.has(tripK)
+      };
+    });
 
 
     return res.json(out);
@@ -227,12 +227,12 @@ const out = modulos.map(m => {
 // Ruta para obtener información para terminales verificacion de cambioscc
 router.post('/info-para-terminales', async (req, res, next) => {
   const { codigoPresupuesto } = req.body;
-  
+
   // Validar parámetros
   if (!codigoPresupuesto) {
-    return res.status(400).json({ 
-      status: 'error', 
-      message: 'Falta el parámetro codigoPresupuesto' 
+    return res.status(400).json({
+      status: 'error',
+      message: 'Falta el parámetro codigoPresupuesto'
     });
   }
 
@@ -246,9 +246,9 @@ router.post('/info-para-terminales', async (req, res, next) => {
     );
 
     if (clienteRows.length === 0) {
-      return res.status(404).json({ 
-        status: 'error', 
-        message: 'No se encontró el presupuesto con el código proporcionado' 
+      return res.status(404).json({
+        status: 'error',
+        message: 'No se encontró el presupuesto con el código proporcionado'
       });
     }
 
@@ -272,13 +272,13 @@ router.post('/info-para-terminales', async (req, res, next) => {
     };
 
     return res.status(200).json(response);
-    
+
   } catch (error) {
     console.error('❌ ERROR EN /info-para-terminales:', error);
-    return res.status(500).json({ 
-      status: 'error', 
-      message: 'Error al consultar la información', 
-      detail: error.message 
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error al consultar la información',
+      detail: error.message
     });
   }
 });
@@ -286,12 +286,12 @@ router.post('/info-para-terminales', async (req, res, next) => {
 // Ruta para obtener información detallada con costos para terminales
 router.post('/info-para-terminales-costes', async (req, res, next) => {
   const { codigoPresupuesto } = req.body;
-  
+
   // Validar parámetros
   if (!codigoPresupuesto) {
-    return res.status(400).json({ 
-      status: 'error', 
-      message: 'Falta el parámetro codigoPresupuesto' 
+    return res.status(400).json({
+      status: 'error',
+      message: 'Falta el parámetro codigoPresupuesto'
     });
   }
 
@@ -305,9 +305,9 @@ router.post('/info-para-terminales-costes', async (req, res, next) => {
     );
 
     if (clienteRows.length === 0) {
-      return res.status(404).json({ 
-        status: 'error', 
-        message: 'No se encontró el presupuesto con el código proporcionado' 
+      return res.status(404).json({
+        status: 'error',
+        message: 'No se encontró el presupuesto con el código proporcionado'
       });
     }
 
@@ -347,12 +347,12 @@ router.post('/info-para-terminales-costes', async (req, res, next) => {
     };
 
     return res.status(200).json(response);
-    
+
   } catch (error) {
     console.error('❌ ERROR EN /info-para-terminales-costes:', error);
-    return res.status(500).json({ 
-      status: 'error', 
-      message: 'Error al consultar la información de costos', 
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error al consultar la información de costos',
       detail: error.message,
       sqlMessage: error.sqlMessage
     });
@@ -373,40 +373,40 @@ router.post('/info-para-terminales-costes', async (req, res, next) => {
  */
 router.post('/consulta', async (req, res) => {
   const { query } = req.body;
-  
+
   // Validar que existe la consulta
   if (!query || typeof query !== 'string') {
-    return res.status(400).json({ 
-      status: 'error', 
-      message: 'Falta la consulta SQL en el cuerpo de la petición' 
+    return res.status(400).json({
+      status: 'error',
+      message: 'Falta la consulta SQL en el cuerpo de la petición'
     });
   }
 
   // Protección: solo SELECT (evita UPDATE/DELETE/DDL)
   const queryTrimmed = query.trim().toLowerCase();
   if (!queryTrimmed.startsWith('select')) {
-    return res.status(400).json({ 
-      status: 'error', 
-      message: 'Solo se permiten consultas SELECT' 
+    return res.status(400).json({
+      status: 'error',
+      message: 'Solo se permiten consultas SELECT'
     });
   }
 
   // Protección adicional: rechazar palabras clave peligrosas
   const dangerousKeywords = ['drop', 'delete', 'update', 'insert', 'alter', 'create', 'truncate', 'exec', 'execute'];
-  const hasDangerousKeyword = dangerousKeywords.some(keyword => 
+  const hasDangerousKeyword = dangerousKeywords.some(keyword =>
     queryTrimmed.includes(keyword)
   );
 
   if (hasDangerousKeyword) {
-    return res.status(400).json({ 
-      status: 'error', 
-      message: 'La consulta contiene palabras clave no permitidas' 
+    return res.status(400).json({
+      status: 'error',
+      message: 'La consulta contiene palabras clave no permitidas'
     });
   }
 
   try {
     const [rows] = await pool.query(query);
-    
+
     return res.status(200).json({
       status: 'ok',
       rowCount: rows.length,
@@ -460,12 +460,12 @@ router.post('/consulta', async (req, res) => {
  */
 router.post('/consultaMAYOR', async (req, res) => {
   const { queries } = req.body;
-  
+
   // Validar que existe el array de consultas
   if (!Array.isArray(queries) || queries.length === 0) {
-    return res.status(400).json({ 
-      status: 'error', 
-      message: 'Debes enviar un array de queries en el cuerpo de la petición' 
+    return res.status(400).json({
+      status: 'error',
+      message: 'Debes enviar un array de queries en el cuerpo de la petición'
     });
   }
 
@@ -473,37 +473,37 @@ router.post('/consultaMAYOR', async (req, res) => {
   for (let i = 0; i < queries.length; i++) {
     const q = queries[i];
     if (!q.id || typeof q.id !== 'string') {
-      return res.status(400).json({ 
-        status: 'error', 
-        message: `Query en posición ${i} debe tener un 'id' string` 
+      return res.status(400).json({
+        status: 'error',
+        message: `Query en posición ${i} debe tener un 'id' string`
       });
     }
     if (!q.sql || typeof q.sql !== 'string') {
-      return res.status(400).json({ 
-        status: 'error', 
-        message: `Query '${q.id}' debe tener un 'sql' string` 
+      return res.status(400).json({
+        status: 'error',
+        message: `Query '${q.id}' debe tener un 'sql' string`
       });
     }
-    
+
     // Protección: solo SELECT
     const queryTrimmed = q.sql.trim().toLowerCase();
     if (!queryTrimmed.startsWith('select')) {
-      return res.status(400).json({ 
-        status: 'error', 
-        message: `Query '${q.id}': Solo se permiten consultas SELECT` 
+      return res.status(400).json({
+        status: 'error',
+        message: `Query '${q.id}': Solo se permiten consultas SELECT`
       });
     }
 
     // Protección adicional: rechazar palabras clave peligrosas
     const dangerousKeywords = ['drop', 'delete', 'update', 'insert', 'alter', 'create', 'truncate', 'exec', 'execute'];
-    const hasDangerousKeyword = dangerousKeywords.some(keyword => 
+    const hasDangerousKeyword = dangerousKeywords.some(keyword =>
       queryTrimmed.includes(keyword)
     );
 
     if (hasDangerousKeyword) {
-      return res.status(400).json({ 
-        status: 'error', 
-        message: `Query '${q.id}': La consulta contiene palabras clave no permitidas` 
+      return res.status(400).json({
+        status: 'error',
+        message: `Query '${q.id}': La consulta contiene palabras clave no permitidas`
       });
     }
   }
@@ -515,7 +515,7 @@ router.post('/consultaMAYOR', async (req, res) => {
     // Ejecutar queries en secuencia
     for (const query of queries) {
       const startTime = Date.now();
-      
+
       // Reemplazar referencias a resultados anteriores
       let params = query.params || [];
       if (Array.isArray(params)) {
@@ -524,14 +524,14 @@ router.post('/consultaMAYOR', async (req, res) => {
             // Extraer referencia: {{queryId.campo}} o {{queryId[0].campo}}
             const ref = param.slice(2, -2);
             const match = ref.match(/^(\w+)(?:\[(\d+)\])?\.(\w+)$/);
-            
+
             if (match) {
               const [, queryId, index, field] = match;
-              
+
               if (!results[queryId]) {
                 throw new Error(`Referencia a query inexistente: ${queryId}`);
               }
-              
+
               const data = results[queryId].data;
               if (index !== undefined) {
                 // Acceso por índice: {{queryId[0].campo}}
@@ -545,7 +545,7 @@ router.post('/consultaMAYOR', async (req, res) => {
                   return data[0][field];
                 }
               }
-              
+
               throw new Error(`No se pudo resolver la referencia: ${param}`);
             }
           }
