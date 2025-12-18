@@ -95,6 +95,18 @@ router.get('/pedidosComercialesJeronimoN8N', async (req, res) => {
   }
 });
 
+router.get('/pedidosComercialesJeronimoN8N_completa', async (req, res) => {
+  try {
+    const response = await fetch('http://192.168.1.81:3001/api/pedidosComercialesJeronimoN8N_completa');
+    const data = await response.json();
+    console.log('Datos recibidos ACCESS pedidosComerciales');
+    res.json(data);
+  } catch (err) {
+   console.error('Error consumiendo el proxy:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/pedidosComerciales40Registro', async (req, res) => {
   try {
     const response = await fetch('http://192.168.1.81:3001/api/pedidosComerciales40Registro');
