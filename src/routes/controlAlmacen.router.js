@@ -523,20 +523,19 @@ router.get('/control-instaladores/read-reportes', async (req, res) => {
   try {
     const { from, to } = req.query;
 
-    // Construcción de rango: desde inclusivo, hasta exclusivo (día siguiente)
-    // Si no vienen, se fija una semana atrás hasta hoy.
-    const fromDate = from && /^\d{4}-\d{2}-\d{2}$/.test(from)
-      ? from
-      : new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+const TZ = 'Europe/Madrid';
 
-    let toDate = to && /^\d{4}-\d{2}-\d{2}$/.test(to)
-      ? to
-      : new Date().toISOString().slice(0, 10);
+const fromDate = (from && /^\d{4}-\d{2}-\d{2}$/.test(from))
+  ? from
+  : addDaysYmd(ymdInTZ(new Date(), TZ), -7);
 
-    // endExclusive = toDate + 1 día
-    const endExclusive = new Date(toDate);
-    endExclusive.setDate(endExclusive.getDate() + 1);
-    const toExclusive = endExclusive.toISOString().slice(0, 10);
+const toDate = (to && /^\d{4}-\d{2}-\d{2}$/.test(to))
+  ? to
+  : ymdInTZ(new Date(), TZ);
+
+// endExclusive = toDate + 1 día (en formato YYYY-MM-DD)
+const toExclusive = addDaysYmd(toDate, 1);
+
 
     const sql = `
       SELECT
