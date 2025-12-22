@@ -518,30 +518,45 @@ router.delete('/usuarioseliminar/:id', async (req, res) => {
 
 // Lee reportes con filtro de fechas (>= from y < to+1día)
 
+
+
+
+
 router.get('/control-instaladores/read-reportes', async (req, res) => {
   console.log(`[${new Date().toISOString()}] GET /control-instaladores/read-reportes - Query:`, req.query);
   try {
     const { from, to } = req.query;
 
-const TZ = 'Europe/Madrid';
+    const isYmd = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
-const fromDate = (from && /^\d{4}-\d{2}-\d{2}$/.test(from))
-  ? from
-  : addDaysYmd(ymdInTZ(new Date(), TZ), -7);
+    // "Hoy" según MySQL (evita UTC/zonas horarias del server Node)
+    const [todayRows] = await poolAlmacen.query(`SELECT CURDATE() AS today`);
+    const today = todayRows[0].today; // normalmente 'YYYY-MM-DD' o Date
 
-const toDate = (to && /^\d{4}-\d{2}-\d{2}$/.test(to))
-  ? to
-  : ymdInTZ(new Date(), TZ);
+    const toYmd = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : String(d));
 
-// endExclusive = toDate + 1 día (en formato YYYY-MM-DD)
-const toExclusive = addDaysYmd(toDate, 1);
+    const toDate = isYmd(to) ? to : toYmd(today);
 
+    // Default: 7 días atrás desde MySQL (coherente con CURDATE)
+    const fromDate = isYmd(from)
+      ? from
+      : (await (async () => {
+          const [r] = await poolAlmacen.query(`SELECT DATE_SUB(CURDATE(), INTERVAL 7 DAY) AS fromDate`);
+          return toYmd(r[0].fromDate);
+        })());
+
+    // Hasta exclusivo = toDate + 1 día (en MySQL)
+    const [toExRows] = await poolAlmacen.query(
+      `SELECT DATE_ADD(?, INTERVAL 1 DAY) AS toExclusive`,
+      [toDate]
+    );
+    const toExclusive = toYmd(toExRows[0].toExclusive);
 
     const sql = `
       SELECT
         id,
         equipo_montador,
-        fecha,
+        DATE_FORMAT(fecha, '%Y-%m-%d') AS fecha,
         hora_inicio,
         hora_fin,
         hora_modal_final,
@@ -561,13 +576,27 @@ const toExclusive = addDaysYmd(toDate, 1);
       WHERE fecha >= ? AND fecha < ?
       ORDER BY fecha DESC, id DESC
     `;
+
     const [rows] = await poolAlmacen.query(sql, [fromDate, toExclusive]);
     res.json({ status: 'ok', data: rows });
   } catch (error) {
     console.error('❌ Error en read-reportes:', error);
-    res.status(500).json({ status: 'error', message: 'Error interno del servidor', detail: error.message });
+    res.status(500).json({
+      status: 'error',
+      message: 'Error interno del servidor',
+      detail: error.message
+    });
   }
 });
+
+
+
+
+
+
+
+
+
 
 // Crea un reporte
 router.post('/control-instaladores/create-reportes', async (req, res) => {
