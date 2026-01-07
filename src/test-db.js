@@ -10,7 +10,7 @@ async function testConnection() {
     const [columns] = await connection.query(`
       SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY 
       FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_SCHEMA = 'z_felman2023' 
+      WHERE TABLE_SCHEMA = '${process.env.DB_NAME}' 
       AND TABLE_NAME = 'clientes'
     `);
     

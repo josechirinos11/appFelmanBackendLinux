@@ -28,7 +28,7 @@ class DatabaseMonitor {
   // Métodos para tabla presupuestospedidos
   async getAllPresupuestosPedidosNumeros() {
     try {
-      const query = `SELECT CodigoNumero FROM z_felman2023.presupuestospedidos ORDER BY CodigoNumero ASC`;
+      const query = `SELECT CodigoNumero FROM ${process.env.DB_NAME}.presupuestospedidos ORDER BY CodigoNumero ASC`;
       const [rows] = await pool.query(query);
       return rows.map(row => row.CodigoNumero);
     } catch (error) {
@@ -50,7 +50,7 @@ class DatabaseMonitor {
           FechaCreacion,
           FechaMod,
           ExpTerminalesFecha
-        FROM z_felman2023.presupuestospedidos 
+        FROM ${process.env.DB_NAME}.presupuestospedidos 
         WHERE CodigoNumero = ${this.escapeValue(codigoNumero)}
       `;
       const [rows] = await pool.query(query);
@@ -64,7 +64,7 @@ class DatabaseMonitor {
   // Métodos para tabla fpresupuestos
   async getAllPresupuestosNumeros() {
     try {
-      const query = `SELECT Numero FROM z_felman2023.fpresupuestos ORDER BY Numero ASC`;
+      const query = `SELECT Numero FROM ${process.env.DB_NAME}.fpresupuestos ORDER BY Numero ASC`;
       const [rows] = await pool.query(query);
       return rows.map(row => row.Numero);
     } catch (error) {
@@ -87,7 +87,7 @@ class DatabaseMonitor {
           FechaCreacion,
           FechaMod,
           ExpTerminalesFecha
-        FROM z_felman2023.fpresupuestos 
+        FROM ${process.env.DB_NAME}.fpresupuestos 
         WHERE Numero = ${this.escapeValue(numero)}
       `;
       const [rows] = await pool.query(query);
@@ -324,16 +324,16 @@ class DatabaseMonitor {
       console.log('🔌 Probando conexión a la base de datos...');
       
       // Verificar tabla presupuestospedidos
-      const [presupuestosPedidosCount] = await pool.query('SELECT COUNT(*) as count FROM z_felman2023.presupuestospedidos');
+      const [presupuestosPedidosCount] = await pool.query(`SELECT COUNT(*) as count FROM ${process.env.DB_NAME}.presupuestospedidos`);
       
       // Verificar tabla fpresupuestos
-      const [fpresupuestosCount] = await pool.query('SELECT COUNT(*) as count FROM z_felman2023.fpresupuestos');
+      const [fpresupuestosCount] = await pool.query(`SELECT COUNT(*) as count FROM ${process.env.DB_NAME}.fpresupuestos`);
       
       // Verificar columnas de presupuestospedidos
       const [presupuestosPedidosColumns] = await pool.query(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_SCHEMA = 'z_felman2023' 
+        WHERE TABLE_SCHEMA = '${process.env.DB_NAME}' 
         AND TABLE_NAME = 'presupuestospedidos'
         AND COLUMN_NAME IN ('CodigoNumero', 'Serie', 'Numero', 'ClienteNombre', 'NombreUsuario', 'FechaModificacion', 'FechaCreacion', 'FechaMod', 'ExpTerminalesFecha')
       `);
@@ -342,7 +342,7 @@ class DatabaseMonitor {
       const [fpresupuestosColumns] = await pool.query(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_SCHEMA = 'z_felman2023' 
+        WHERE TABLE_SCHEMA = '${process.env.DB_NAME}' 
         AND TABLE_NAME = 'fpresupuestos'
         AND COLUMN_NAME IN ('Serie', 'Numero', 'PresupsOrigen', 'NumeroManual', 'ClienteNombre', 'NombreUsuario', 'FechaModificacion', 'FechaCreacion', 'FechaMod', 'ExpTerminalesFecha')
       `);

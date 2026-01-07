@@ -7,7 +7,7 @@ router.get('/inicio', async (req, res, next) => {
   try {
     const [result] = await pool.execute(`
       SELECT DISTINCT CONCAT(CodigoPresupSerie, '/', CodigoPresupNumero) AS Presupuesto_No
-      FROM z_felman2023.fpresupuestoslineas
+      FROM ${process.env.DB_NAME}.fpresupuestoslineas
       ORDER BY CodigoPresupNumero DESC
     `);
 
@@ -105,7 +105,7 @@ router.post('/modulos-info', async (req, res) => {
         pl.Linea              AS Linea,
         pl.CodigoSerie        AS FabSerie,
         pl.CodigoNumero       AS FabNumero
-      FROM z_felman2023.fpresupuestoslineas pl
+      FROM ${process.env.DB_NAME}.fpresupuestoslineas pl
       WHERE (pl.CodigoPresupSerie, pl.CodigoPresupNumero, pl.Linea) IN (${tuplePlaceholders})
     `;
     const mapParams = presuTuplas.flat();
@@ -145,7 +145,7 @@ router.post('/modulos-info', async (req, res) => {
     const pairPlaceholders = fabPairs.map(() => '(?,?)').join(',');
     const guiasSql = `
       SELECT fa.CodigoSerie, fa.CodigoNumero
-      FROM z_felman2023.fpresupuestosarticulos fa
+      FROM ${process.env.DB_NAME}.fpresupuestosarticulos fa
       WHERE (fa.CodigoSerie, fa.CodigoNumero) IN (${pairPlaceholders})
         AND fa.Tipo = 1 AND fa.Log01 = 1 AND fa.Log04 = 1
         AND fa.num18 = 2
@@ -158,7 +158,7 @@ router.post('/modulos-info', async (req, res) => {
     // 4.2 Solape (por par Serie/Numero FAB)
     const solapeSql = `
       SELECT fa.CodigoSerie, fa.CodigoNumero
-      FROM z_felman2023.fpresupuestosarticulos fa
+      FROM ${process.env.DB_NAME}.fpresupuestosarticulos fa
       WHERE (fa.CodigoSerie, fa.CodigoNumero) IN (${pairPlaceholders})
         AND fa.Tipo = 1 AND fa.Log01 = 1 AND fa.Log04 = 1
         AND (
@@ -175,7 +175,7 @@ router.post('/modulos-info', async (req, res) => {
     const triplePlaceholders = fabTriples.map(() => '(?,?,?)').join(',');
     const cristalSql = `
       SELECT plc.CodigoSerie, plc.CodigoNumero, plc.Linea
-      FROM z_felman2023.fpresupuestoslineascomponentes plc
+      FROM ${process.env.DB_NAME}.fpresupuestoslineascomponentes plc
       WHERE (plc.CodigoSerie, plc.CodigoNumero, plc.Linea) IN (${triplePlaceholders})
         AND plc.TipoArticulo = 5
       GROUP BY plc.CodigoSerie, plc.CodigoNumero, plc.Linea
@@ -240,7 +240,7 @@ router.post('/info-para-terminales', async (req, res, next) => {
     // 1. Obtener ClienteNombre de fpresupuestos
     const [clienteRows] = await pool.execute(
       `SELECT ClienteNombre 
-       FROM z_felman2023.fpresupuestos 
+      FROM ${process.env.DB_NAME}.fpresupuestos 
        WHERE NumeroManual = ?`,
       [codigoPresupuesto]
     );
@@ -257,7 +257,7 @@ router.post('/info-para-terminales', async (req, res, next) => {
     // 2. Obtener Serie1Desc, CodigoSerie, CodigoNumero de fpresupuestoslineas (TODOS los módulos del presupuesto)
     const [lineasRows] = await pool.execute(
       `SELECT Serie1Desc, CodigoSerie, CodigoNumero, Modulo
-       FROM z_felman2023.fpresupuestoslineas 
+      FROM ${process.env.DB_NAME}.fpresupuestoslineas 
        WHERE PresupNumMan = ?
        ORDER BY Modulo`,
       [codigoPresupuesto]
@@ -299,7 +299,7 @@ router.post('/info-para-terminales-costes', async (req, res, next) => {
     // 1. Obtener ClienteNombre de fpresupuestos
     const [clienteRows] = await pool.execute(
       `SELECT ClienteNombre 
-       FROM z_felman2023.fpresupuestos 
+      FROM ${process.env.DB_NAME}.fpresupuestos 
        WHERE NumeroManual = ?`,
       [codigoPresupuesto]
     );
@@ -322,8 +322,8 @@ router.post('/info-para-terminales-costes', async (req, res, next) => {
         l.Modulo,
         c.Linea,
         CAST(ROUND(SUM(c.Coste + c.Desperdicio), 2) AS DECIMAL(18,2)) AS CosteTotal
-      FROM z_felman2023.fpresupuestoslineas AS l
-      JOIN z_felman2023.fPresupuestosLineasComponentes AS c
+      FROM ${process.env.DB_NAME}.fpresupuestoslineas AS l
+      JOIN ${process.env.DB_NAME}.fPresupuestosLineasComponentes AS c
         ON c.CodigoSerie = l.CodigoSerie
        AND c.CodigoNumero = l.CodigoNumero
        AND c.Linea = l.Linea
