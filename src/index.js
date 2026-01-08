@@ -266,12 +266,12 @@ app.get('/control-afix/cli/search', async (req, res) => {
     text = text.replace(/\s+/g, ' ').toUpperCase();
 
     // SQL: ras MATCHES 'PATRÓN' (usa * y ?)
-    const sql = `
-      select first 50 rowid, ras, dni, te1, e_mail
+const sql = `
+      select rowid, ras, dni, te1, e_mail
       from cli
       where upper(ras) matches '${text}'
       order by ras
-    `;
+    `; // <-- Quitamos "first 50"
 
     const raw = await runAfixSelect(sql);
 
@@ -317,41 +317,29 @@ app.get('/control-afix/healthz', (req, res) => {
 app.post('/control-afix/sql', async (req, res) => {
   console.log('POST /control-afix/sql', { body: req.body, query: req.query });
   
-  try {
+try {
     const sqlIn = String((req.body && req.body.sql) || '').trim();
-    const firstIn = Number.isFinite(+req.body?.first) 
-      ? Math.max(1, Math.min(5000, +req.body.first)) 
-      : 200;
-    const rawMode = String(req.query.raw || '') === '1';
-
+    // Eliminamos la lógica de 'firstIn' ya que Informix SE no la soporta
+    
     if (!sqlIn) {
       return res.status(400).json({ ok: false, error: 'sql requerido' });
     }
 
-    // Solo SELECT; bloquea cosas peligrosas
+    // Mantener validaciones de seguridad (banned, etc.)
     const banned = /\b(update|insert|delete|create|alter|drop|truncate|grant|revoke|load|unload|system|execute|call|database|start|stop)\b/i;
     if (banned.test(sqlIn)) {
       return res.status(400).json({ ok: false, error: 'solo se permite SELECT (bloqueado)' });
     }
-    if (!/^\s*select\b/i.test(sqlIn)) {
-      return res.status(400).json({ ok: false, error: 'solo se permite SELECT' });
-    }
 
-    // Un solo statement
-    if (/;.+/s.test(sqlIn.replace(/;+$/,''))) {
-      return res.status(400).json({ ok: false, error: 'no se permiten múltiples statements' });
-    }
-
-    // Inyecta FIRST si no viene
+    // Ejecutar el SQL tal cual viene (sin inyectar FIRST)
     let sql = sqlIn.replace(/;+$/,'');
-    if (!/^\s*select\s+first\s+\d+\b/i.test(sql)) {
-      sql = sql.replace(/^\s*select\b/i, m => `${m} first ${firstIn}`);
-    }
+    const raw = await runAfixSelect(sql);
+
+ 
 
     console.log('[AFIX] Ejecutando SQL:', sql);
     
-    // ✅ USA LA MISMA FUNCIÓN que funciona en las rutas GET
-    const raw = await runAfixSelect(sql);
+
     
     const lines = raw
       .split('\n')
