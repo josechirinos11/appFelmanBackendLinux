@@ -126,10 +126,7 @@ order by ras
 
 
 
-
-
 async function queryRawSelect(sqlIn) {
-  // === ENTORNO como el que ya te funciona en index ===
   const envInformix = {
     INFORMIXDIR: '/home/ix730',
     INFORMIXSERVER: 'afix4_tcp',
@@ -161,29 +158,45 @@ ${sql}
 
   fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
 
-  return await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     let child;
-    const killTimer = setTimeout(() => { try { child && child.kill('SIGKILL'); } catch {} }, 15000);
-    child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], { env: { ...process.env, ...envInformix } });
+    const killTimer = setTimeout(() => { 
+      try { child && child.kill('SIGKILL'); } catch {} 
+    }, 15000);
+    
+    child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], { 
+      env: { ...process.env, ...envInformix } 
+    });
 
-    let out = ''; let err = '';
+    let out = ''; 
+    let err = '';
     child.stdout.on('data', c => out += c.toString('utf8'));
     child.stderr.on('data', c => err += c.toString('utf8'));
 
     child.on('close', code => {
       clearTimeout(killTimer);
       let payload = '';
-      try { if (fs.existsSync(outFile)) payload = fs.readFileSync(outFile, 'utf8'); } catch {}
+      try { 
+        if (fs.existsSync(outFile)) {
+          payload = fs.readFileSync(outFile, 'utf8'); 
+        }
+      } catch {}
 
       try { fs.unlinkSync(sqlFile); } catch {}
       try { fs.unlinkSync(outFile); } catch {}
 
-      if (code !== 0) return reject(new Error((err || out || '').trim() || `dbaccess exited ${code}`));
-      if (!payload) return reject(new Error((err || out || '').trim() || 'dbaccess ok pero sin datos'));
+      if (code !== 0) {
+        return reject(new Error((err || out || '').trim() || `dbaccess exited ${code}`));
+      }
+      if (!payload) {
+        return reject(new Error((err || out || '').trim() || 'dbaccess ok pero sin datos'));
+      }
       resolve(payload);
     });
   });
 }
+
+
 
 module.exports = {
   ping,
