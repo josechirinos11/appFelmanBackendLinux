@@ -113,48 +113,129 @@ order by ras
  * Ejecuta un SELECT arbitrario (SOLO LECTURA) y devuelve el output crudo del UNLOAD
  * SOLUCIÓN: Usa runDbaccess (bash -lc) que SÍ funciona, en lugar de dbaccess -e
  */
+
 async function queryRawSelect(sqlIn) {
+  const envInformix = {
+    INFORMIXDIR: '/home/ix730',
+    INFORMIXSERVER: 'afix4_tcp',
+    DBPATH: '/home/af5/dat/afix4/dbs:/home/af5/dat/afix4/dbs.20250618:/home/ix730/etc',
+    DBTEMP: '/home/tmp',
+    CLIENT_LOCALE: 'es_es.8859-1',
+    DB_LOCALE: 'es_es.8859-1',
+    DBDATE: 'DMY4/',
+    INFORMIXCONTIME: '5',
+    INFORMIXCONRETRY: '1',
+    PATH: `${process.env.PATH || ''}:/home/ix730/bin:/home/ix730/lib`,
+  };
+
+  const dbaccessBin = fs.existsSync('/home/ix730/bin/dbaccess')
+    ? '/home/ix730/bin/dbaccess'
+    : '/usr/bin/dbaccess';
+  
+  const DBNAME = 'apli01';
+
   const pid = process.pid;
   const rnd = Math.random().toString(36).slice(2);
+  const sqlFile = `/tmp/node_afix_${pid}_${rnd}.sql`;
   const outFile = `/tmp/node_afix_${pid}_${rnd}.out`;
 
   const sql = String(sqlIn).trim();
   
-  // Envuelve el SQL en un UNLOAD
-  const fullSql = `
+  // Script idéntico al de index.js
+  const script = `
 unload to '${outFile}' delimiter '|'
 ${sql}
-;`;
+;`.trim() + '\n';
 
-  console.log('[AFIX] Ejecutando SQL via runDbaccess (bash -lc)...');
-  
-  try {
-    // ✅ Usa runDbaccess que ejecuta con bash -lc y SÍ FUNCIONA
-    await runDbaccess(fullSql);
+  fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
+  console.log('[AFIX] SQL file:', sqlFile);
+
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    let child;
+
+    // Timeout de 15 segundos
+    const killTimer = setTimeout(() => { 
+      console.log('[AFIX] TIMEOUT - matando proceso');
+      try { 
+        if (child) {
+          child.kill('SIGKILL'); 
+          reject(new Error('Query timeout after 15s'));
+        }
+      } catch (e) {
+        console.error('[AFIX] Error killing process:', e);
+      }
+    }, 15000);
     
-    // Lee el archivo de salida
-    let payload = '';
-    if (fs.existsSync(outFile)) {
-      payload = fs.readFileSync(outFile, 'utf8');
-      console.log('[AFIX] Query exitosa, bytes:', payload.length);
-    }
+    // Ejecuta SIN -e, dejando que use @INFORMIXSERVER del script
+    console.log('[AFIX] Spawning:', dbaccessBin, DBNAME, sqlFile);
+    child = spawn(dbaccessBin, [DBNAME, sqlFile], { 
+      env: { ...process.env, ...envInformix },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let out = ''; 
+    let err = '';
+    child.stdout.on('data', c => {
+      out += c.toString('utf8');
+      console.log('[AFIX] stdout chunk:', c.toString('utf8').substring(0, 100));
+    });
+    child.stderr.on('data', c => {
+      err += c.toString('utf8');
+      console.log('[AFIX] stderr chunk:', c.toString('utf8').substring(0, 100));
+    });
+
+    child.on('close', code => {
+      clearTimeout(killTimer);
+      
+      let payload = '';
+      let outFileSize = 0;
+      
+      try { 
+        if (fs.existsSync(outFile)) {
+          const buf = fs.readFileSync(outFile);
+          outFileSize = buf.length;
+          payload = buf.toString('utf8');
+        }
+      } catch (readErr) {
+        console.error('[AFIX] Error reading output:', readErr);
+      }
+
+      // Limpieza
+      try { fs.unlinkSync(sqlFile); } catch {}
+      try { fs.unlinkSync(outFile); } catch {}
+
+      console.log('[AFIX] Process closed:', {
+        code, 
+        ms: Date.now() - start,
+        stdout_len: out.length,
+        stderr_len: err.length,
+        outFileSize
+      });
+
+      if (code !== 0) {
+        const detail = (err || out || '').trim();
+        return reject(new Error(detail || `dbaccess exited with code ${code}`));
+      }
+
+      if (!payload) {
+        const detail = (err || out || '').trim() || 'dbaccess ok pero sin datos';
+        return reject(new Error(detail));
+      }
+
+      resolve(payload);
+    });
     
-    // Limpieza
-    try { fs.unlinkSync(outFile); } catch {}
-    
-    if (!payload) {
-      throw new Error('UNLOAD no generó datos');
-    }
-    
-    return payload;
-    
-  } catch (err) {
-    // Limpieza en caso de error
-    try { fs.unlinkSync(outFile); } catch {}
-    console.error('[AFIX] Error en queryRawSelect:', err.message);
-    throw err;
-  }
+    child.on('error', (spawnErr) => {
+      clearTimeout(killTimer);
+      console.error('[AFIX] Spawn error:', spawnErr);
+      reject(spawnErr);
+    });
+  });
 }
+
+
+
 
 module.exports = {
   ping,
