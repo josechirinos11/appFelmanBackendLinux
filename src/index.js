@@ -209,7 +209,7 @@ app.use('/control-almacen', controlAlmacenRoutes);
 app.use('/control-optima', controlOptimaRoutes);
 
 
-//app.use('/control-afix', controlAfixRoutes);
+app.use('/control-afix', controlAfixRoutes);
 //app.use('/control-afix-legacy', controlAfixLegacyRoutes);
 // === RUTA: buscar cliente por DNI/NIF/CIF exacto ===
 // Ejemplo: GET /control-afix/cli/by-dni?dni=B46388690
