@@ -321,7 +321,7 @@ app.post('/control-afix/sql', async (req, res) => {
     // El límite "first" ahora lo aplicamos en Node.js, no en el SQL
     const limitRows = Number.isFinite(+req.body?.first) 
       ? Math.max(1, Math.min(5000, +req.body.first)) 
-      : 200;
+      : 1000;
       
     const rawMode = String(req.query.raw || '') === '1';
 
