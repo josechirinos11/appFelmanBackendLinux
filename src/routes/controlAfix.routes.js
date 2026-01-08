@@ -35,11 +35,22 @@ router.post('/sql', async (req, res) => {
     if (!/^\s*select\b/i.test(sqlIn)) return res.status(400).json({ ok: false, error: 'Solo SELECT' });
 
     const raw = await Afix.queryRawSelect(sqlIn);
-    let lines = raw.split('\n').map(s => s.trim()).filter(s => s && !s.includes('unloaded'));
+    
+    let lines = raw.split('\n')
+      .map(s => s.trim())
+      .filter(s => s && !s.includes('unloaded') && !s.includes('Database'));
+
     if (lines.length > limitRows) lines = lines.slice(0, limitRows);
 
-    res.json({ ok: true, count: lines.length, rows: lines.map(l => l.split('|')) });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+    // Mapeo limpio: quita pipe final y hace trim a cada celda
+    const cleanRows = lines.map(l => 
+      l.replace(/\|$/, '').split('|').map(cell => cell.trim())
+    );
+
+    res.json({ ok: true, count: cleanRows.length, rows: cleanRows });
+  } catch (e) { 
+    res.status(500).json({ ok: false, error: e.message }); 
+  }
 });
 
 module.exports = router;

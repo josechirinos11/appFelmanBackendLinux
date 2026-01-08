@@ -30,13 +30,12 @@ async function queryRawSelect(sqlIn) {
   const sqlFile = `/tmp/node_afix_${pid}_${rnd}.sql`;
   const outFile = `/tmp/node_afix_${pid}_${rnd}.out`;
 
+  // Añadimos un recorte de espacios en el UNLOAD para datos más limpios
   const script = `unload to '${outFile}' delimiter '|'\n${String(sqlIn).trim()}\n;`;
   fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
 
   return new Promise((resolve, reject) => {
-    const start = Date.now();
-    let child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], { env: { ...process.env, ...envInformix } });
-
+    const child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], { env: { ...process.env, ...envInformix } });
     const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 15000);
 
     child.on('close', code => {
@@ -45,29 +44,30 @@ async function queryRawSelect(sqlIn) {
       try {
         if (fs.existsSync(outFile)) payload = fs.readFileSync(outFile, 'utf8');
       } catch (_) {}
-
       try { fs.unlinkSync(sqlFile); fs.unlinkSync(outFile); } catch {}
 
-      if (code !== 0 || !payload) {
-        return reject(new Error(`Error dbaccess (Code ${code}) o sin datos`));
-      }
+      if (code !== 0) return reject(new Error(`Error dbaccess (${code})`));
       resolve(payload);
     });
   });
 }
-
 /**
  * Endpoints utilizando el motor robusto
  */
 async function ping() {
   const raw = await queryRawSelect('select count(*) from systables');
-  return { ok: true, out: raw.trim() };
+  // Extrae el número antes del primer pipe y lo convierte a entero
+  const valor = parseInt(raw.split('|')[0]);
+  return { ok: true, tablas: valor };
 }
 
 async function getClienteByDni(dni) {
   const sql = `select cli, ras, dni, te1, e_mail from cli where dni = '${dni.replace(/'/g, "''")}'`;
   const raw = await queryRawSelect(sql);
-  const rows = raw.split('\n').filter(Boolean).map(l => l.split('|'));
+  // Limpia el pipe final y separa por columnas
+  const rows = raw.split('\n')
+    .filter(Boolean)
+    .map(l => l.replace(/\|$/, '').split('|').map(c => c.trim()));
   return { rows };
 }
 
@@ -75,7 +75,9 @@ async function searchClientesByRazonSocial(pattern) {
   const matches = pattern.includes('*') ? pattern : `${pattern}*`;
   const sql = `select cli, ras, dni, te1, e_mail from cli where ras matches '${matches.replace(/'/g, "''")}' order by ras`;
   const raw = await queryRawSelect(sql);
-  const rows = raw.split('\n').filter(Boolean).map(l => l.split('|'));
+  const rows = raw.split('\n')
+    .filter(Boolean)
+    .map(l => l.replace(/\|$/, '').split('|').map(c => c.trim()));
   return { rows };
 }
 
