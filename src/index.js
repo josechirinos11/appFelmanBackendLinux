@@ -209,11 +209,11 @@ app.use('/control-almacen', controlAlmacenRoutes);
 app.use('/control-optima', controlOptimaRoutes);
 
 
-//app.use('/control-afix', controlAfixRoutes);
+app.use('/control-afix', controlAfixRoutes);
 //app.use('/control-afix-legacy', controlAfixLegacyRoutes);
 // === RUTA: buscar cliente por DNI/NIF/CIF exacto ===
 // Ejemplo: GET /control-afix/cli/by-dni?dni=B46388690
-app.get('/control-afix/cli/by-dni', async (req, res) => {
+app.get('/control-afix/cli/by-dni_2', async (req, res) => {
   try {
     const dni = (req.query.dni || '').trim();
 
@@ -253,7 +253,7 @@ app.get('/control-afix/cli/by-dni', async (req, res) => {
   }
 });
 // Ej: GET /control-afix/cli/search?text=CRISTALERIA%2A
-app.get('/control-afix/cli/search', async (req, res) => {
+app.get('/control-afix/cli/search_2', async (req, res) => {
   try {
     let text = (req.query.text || '').trim();
     if (!/^[A-Za-z0-9 \.\-_/*\?]+$/.test(text)) {
@@ -296,7 +296,7 @@ app.get('/control-afix/cli/search', async (req, res) => {
 
 
 // --- HEALTH: no toca Informix, responde inmediato
-app.get('/control-afix/healthz', (req, res) => {
+app.get('/control-afix/healthz_2', (req, res) => {
   res.json({
     ok: true,
     service: 'control-afix',
@@ -312,7 +312,7 @@ app.get('/control-afix/healthz', (req, res) => {
 // POST /control-afix/sql
 // Body JSON: { "sql": "select ...", "first": 200 }
 // Opcional: ?raw=1 para devolver líneas tal cual del UNLOAD
-app.post('/control-afix/sql', async (req, res) => {
+app.post('/control-afix/sql_2', async (req, res) => {
   console.log('POST /control-afix/sql', { body: req.body, query: req.query });
   
   try {
@@ -326,6 +326,7 @@ app.post('/control-afix/sql', async (req, res) => {
     const rawMode = String(req.query.raw || '') === '1';
 
     if (!sqlIn) {
+
       return res.status(400).json({ ok: false, error: 'sql requerido' });
     }
 
