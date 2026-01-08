@@ -41,65 +41,52 @@ router.get('/cli/search', async (req, res) => {
 });
 
 
+
+
 // === Consola SQL SOLO-LECTURA (Informix SE) ===
 // POST /control-afix/sql
 // Body JSON: { "sql": "select ...", "first": 200 }
 // Opcional: ?raw=1 para devolver líneas tal cual del UNLOAD
-app.post('/control-afix/sql', async (req, res) => {
+router.post('/sql', async (req, res) => {
   try {
     const sqlIn = String((req.body && req.body.sql) || '').trim();
     const firstIn = Number.isFinite(+req.body?.first) ? Math.max(1, Math.min(5000, +req.body.first)) : 200;
     const rawMode = String(req.query.raw || '') === '1';
 
-    // 1) Validaciones duras (solo SELECT; un statement; sin ; intermedios)
     if (!sqlIn) return res.status(400).json({ ok: false, error: 'sql requerido' });
 
-    // Prohibidos (escritura / sistema / trucos)
+    // Solo SELECT; bloquea cosas peligrosas
     const banned = /\b(update|insert|delete|create|alter|drop|truncate|grant|revoke|load|unload|system|execute|call|database|start|stop)\b/i;
-    if (banned.test(sqlIn)) {
-      return res.status(400).json({ ok: false, error: 'solo se permite SELECT (instrucción bloqueada)' });
-    }
+    if (banned.test(sqlIn)) return res.status(400).json({ ok: false, error: 'solo se permite SELECT (bloqueado)' });
+    if (!/^\s*select\b/i.test(sqlIn)) return res.status(400).json({ ok: false, error: 'solo se permite SELECT' });
 
-    // Debe empezar por SELECT (permite espacios/comentarios iniciales simples)
-    const startsWithSelect = /^\s*select\b/i.test(sqlIn);
-    if (!startsWithSelect) {
-      return res.status(400).json({ ok: false, error: 'solo se permite SELECT' });
-    }
-
-    // Un único statement: no permitimos múltiples ';'
-    const innerSemicolons = /;.+/s.test(sqlIn.replace(/;+$/,''));
-    if (innerSemicolons) {
+    // Un solo statement
+    if (/;.+/s.test(sqlIn.replace(/;+$/,''))) {
       return res.status(400).json({ ok: false, error: 'no se permiten múltiples statements' });
     }
 
-    // 2) Inyectar FIRST si no lo trae (Informix SE no tiene LIMIT)
-    let sql = sqlIn.replace(/;+$/,''); // quita ; final si viene
-    const hasFirst = /^\s*select\s+first\s+\d+\b/i.test(sql);
-    if (!hasFirst) {
-      // INSERTA FIRST N tras SELECT
+    // Inyecta FIRST si no viene (Informix SE no tiene LIMIT)
+    let sql = sqlIn.replace(/;+$/,'');
+    if (!/^\s*select\s+first\s+\d+\b/i.test(sql)) {
       sql = sql.replace(/^\s*select\b/i, m => `${m} first ${firstIn}`);
     }
 
-    // 3) Ejecutar
-    const raw = await runAfixSelect(sql);
-
-    // 4) Parseo simple del UNLOAD (sin cabeceras)
+    const raw = await Afix.queryRawSelect(sql); // << método del service
     const lines = raw
       .split('\n')
       .map(s => s.trim())
       .filter(s => s && !/^Database (selected|closed)\./i.test(s) && !/row\(s\) unloaded/i.test(s));
 
-    if (rawMode) {
-      return res.json({ ok: true, rows_text: lines, count: lines.length });
-    }
+    if (rawMode) return res.json({ ok: true, count: lines.length, rows_text: lines });
 
-    // Devuelve array de arrays; cada fila -> columnas separadas por '|'
     const rows = lines.map(line => line.split('|'));
     return res.json({ ok: true, count: rows.length, rows });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+
 
 
 module.exports = router;

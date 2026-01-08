@@ -107,10 +107,89 @@ order by ras
   return unloadSelect({ sqlBody, columns, delimiter: ';' });
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+async function queryRawSelect(sqlIn) {
+  // === ENTORNO como el que ya te funciona en index ===
+  const envInformix = {
+    INFORMIXDIR: '/home/ix730',
+    INFORMIXSERVER: 'afix4_tcp',
+    DBPATH: '/home/af5/dat/afix4/dbs:/home/af5/dat/afix4/dbs.20250618:/home/ix730/etc',
+    DBTEMP: '/home/tmp',
+    CLIENT_LOCALE: 'es_es.8859-1',
+    DB_LOCALE: 'es_es.8859-1',
+    DBDATE: 'DMY4/',
+    INFORMIXCONTIME: '5',
+    INFORMIXCONRETRY: '1',
+    PATH: `${process.env.PATH || ''}:/home/ix730/bin:/home/ix730/lib`,
+  };
+
+  const dbaccessBin = fs.existsSync('/home/ix730/bin/dbaccess')
+    ? '/home/ix730/bin/dbaccess'
+    : '/usr/bin/dbaccess';
+  const DBNAME = 'apli01';
+
+  const pid = process.pid;
+  const rnd = Math.random().toString(36).slice(2);
+  const sqlFile = `/tmp/node_afix_${pid}_${rnd}.sql`;
+  const outFile = `/tmp/node_afix_${pid}_${rnd}.out`;
+
+  const sql = String(sqlIn).trim();
+  const script = `
+unload to '${outFile}' delimiter '|'
+${sql}
+;`.trim() + '\n';
+
+  fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
+
+  return await new Promise((resolve, reject) => {
+    let child;
+    const killTimer = setTimeout(() => { try { child && child.kill('SIGKILL'); } catch {} }, 15000);
+    child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], { env: { ...process.env, ...envInformix } });
+
+    let out = ''; let err = '';
+    child.stdout.on('data', c => out += c.toString('utf8'));
+    child.stderr.on('data', c => err += c.toString('utf8'));
+
+    child.on('close', code => {
+      clearTimeout(killTimer);
+      let payload = '';
+      try { if (fs.existsSync(outFile)) payload = fs.readFileSync(outFile, 'utf8'); } catch {}
+
+      try { fs.unlinkSync(sqlFile); } catch {}
+      try { fs.unlinkSync(outFile); } catch {}
+
+      if (code !== 0) return reject(new Error((err || out || '').trim() || `dbaccess exited ${code}`));
+      if (!payload) return reject(new Error((err || out || '').trim() || 'dbaccess ok pero sin datos'));
+      resolve(payload);
+    });
+  });
+}
+
 module.exports = {
   ping,
   getClienteByDni,
   searchClientesByRazonSocial,
   runDbaccess,
-  unloadSelect
+  unloadSelect,
+  queryRawSelect
 };
