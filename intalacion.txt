@@ -1,0 +1,170 @@
+■ Guía de Instalación y Uso del Proyecto Frontend - AppFelman (React 
+Native + Web)
+■ Fecha de última actualización: 7 de agosto de 2025 Desarrollado por el
+Ing. José Chirinos – Tel: 662936645
+■ Esta guía ha sido desarrollada y mantenida por el Ing. José Chirinos y está sujeta a futuras actualizaciones según 
+las necesidades del sistema FELMAN.
+1. Requisitos Previos
+- Node.js versión  18.x
+- Yarn: gestor de paquetes
+- Expo CLI: CLI para React Native
+- Git
+2. Clonar el Repositorio
+git clone https://github.com/josechirinos11/App-felman-native.git cd Appfelman-native
+yarn install
+3. Configurar Variables de Entorno
+EXPO_PUBLIC_API_URL=http://85.59.105.234:3000
+Este valor apunta al backend en Linux que sirve como API REST para la aplicación móvil y web.
+4. Ejecutar la App en Modo Desarrollo (Expo Go)
+npx expo start
+Se abrirá una interfaz web con un código QR que se puede escanear con la app Expo Go para ver la aplicación 
+en un dispositivo móvil.
+5. Compilar Versión Web (Build Web)
+La versión web se genera para ser alojada en el backend Linux bajo la carpeta `/appFelmanBackendLinux/dist`.
+npx expo export:web
+Luego, copiar al servidor Linux:
+scp -r dist/* deploy_felman@85.59.105.234:/appFelmanBackendLinux/dist/
+6. Generar APK (Build Android)
+Para compilar el archivo `.apk` de forma local:
+cd android
+./gradlew clean
+./gradlew assembleRelease
+El APK generado se encontrará en:
+android/app/build/outputs/apk/release/app-release.apk
+Copiar el APK generado a la carpeta compartida de respaldo:
+D:\Compartido\AppFelmanAccessMySQL\apks\AppFelman_v1.apk
+7. Conexión entre Frontend, Backend Linux y Backend Windows
+- El frontend accede a la API por medio de la variable `API_URL`, que apunta a `http://85.59.105.234:3000`.
+- El backend Linux recibe estas peticiones y procesa datos desde las bases MySQL.
+- Algunas rutas del backend Linux se comunican con el backend Windows en: `http://192.168.1.81:3001`.
+8. Observaciones
+- Se recomienda realizar los builds web y Android desde una máquina con permisos adecuados y configuraciones 
+completas.
+- Toda modificación al `.env` debe ser controlada y documentada.
+9. Archivo .env
+# URL del servidor de producción
+EXPO_PUBLIC_API_URL=http://85.59.105.234:3000
+# URL alternativas (comentadas)
+# EXPO_PUBLIC_API_URL_LOCAL=http://128.0.0.253:3000
+# EXPO_PUBLIC_API_URL_NGROK=https://fdb0-85-59-105-234.ngrok-free.app
+Guía de Instalación y Recuperación del Backend AppFelman 
+(Windows)
+Propósito del Backend
+Este backend se encarga de intermediar el acceso a la base de datos Microsoft Access y servir 
+información al sistema principal. Está desarrollado en Node.js y funciona en un servidor con sistema
+operativo Windows.
+Repositorio y Ruta de Instalación
+Repositorio GitHub: 
+https://github.com/josechirinos11/appFelmanBackendWindows
+Ruta donde debe instalarse: 
+D:\Compartido\AppFelmanAccessMySQL\access-proxy
+Instalación de Node.js
+Este backend requiere Node.js. Para instalar:
+https://nodejs.org/en/download
+Versión recomendada: 18.19.0
+Clonar el Repositorio y Preparar Proyecto
+cd D:\Compartido\AppFelmanAccessMySQL
+git clone https://github.com/josechirinos11/appFelmanBackendWindows access-p cd access-proxy
+npm install
+Archivo .env
+Debe colocarse manualmente el archivo `.env` en la raíz del proyecto. Este contiene variables 
+sensibles como claves o rutas internas. Asegúrese de que esté actualizado y configurado antes de
+iniciar el servidor.
+Ruta de Base de Datos
+\\192.168.1.81\Compartido\PRODUCCION_MONCADA\CONTROL_PRODUCCION_MONCADA_V40.
+Si esta base cambia de nombre o ubicación, debe actualizarse también en el archivo index.js.
+Comandos para levantar el servidor
+pm2 start index.js --name AppFelmanWindows
+pm2 save
+Autoarranque con Windows
+$ws = New-Object -ComObject WScript.Shell
+$shortcut = $ws.CreateShortcut("C:\Users\Public\Desktop\AutoStartAppFelman.lnk")
+$shortcut.TargetPath = "C:\Program Files\nodejs\node.exe"
+$shortcut.Arguments = "C:\Users\Administrador\AppData\Roaming\npm\node_modules\pm2\bin\pm2.cmd 
+resurrect"
+$shortcut.WorkingDirectory = "D:\Compartido\AppFelmanAccessMySQL\access-proxy"
+$shortcut.Save()
+Move-Item "C:\Users\Public\Desktop\AutoStartAppFelman.lnk" "$env:APPDATA\Microsoft\Windows\Start 
+Menu\Programs\Startup\AutoStartAppFelman.lnk"
+IP del Servidor Windows
+192.168.1.81
+Rutas a las que accede el backend Linux
+El backend Linux realiza peticiones al backend Windows a través de las siguientes rutas:
+POST http://192.168.1.81:3001/api/webhook
+GET http://192.168.1.81:3001/api/test-access GET
+http://192.168.1.81:3001/api/get-db-path GET
+http://192.168.1.81:3001/api/estado-backend
+Entre otra rutas……
+Guía de Instalación y Arranque del Backend Linux – FELMAN
+Descripción del Proyecto
+Este backend corre sobre un servidor Linux y tiene como objetivo principal ofrecer servicios REST API que
+interactúan con tres bases de datos distintas: - `nudasola` (para pedidos comerciales), - `almacen` (para control 
+de almacén), y - `terminales` (para la terminal de fabricación). También sirve archivos estáticos del frontend web 
+construido en React Native y compilado en la carpeta `dist` del proyecto.
+Además, este backend se comunica con un backend en Windows mediante peticiones HTTP para tareas 
+específicas relacionadas con producción. La IP actual del backend Linux es: 85.59.105.234.
+Acceso al Servidor Linux
+Para conectarse vía SSH al servidor donde está desplegado este backend, usar:
+ssh deploy_felman@85.59.105.234
+La contraseña fue proporcionada por José Albero al Ing. José Chirinos.
+Repositorio del Proyecto
+El código fuente del backend está disponible en:
+https://github.com/josechirinos11/appFelmanBackendWindows
+Ruta de instalación en Linux
+felman:/appFelmanBackendLinux
+Instalación de Node.js
+Se requiere Node.js versión 18.x. Instalar con:
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - sudo 
+apt-get install -y nodejs
+Verificar la instalación:
+node -v npm -v
+Clonación del Repositorio y Dependencias
+cd /appFelmanBackendLinux
+git clone https://github.com/josechirinos11/appFelmanBackendWindows . 
+npm install
+Variables de Entorno
+Debe crearse un archivo `.env` con credenciales de acceso a las 3 bases de datos. Este archivo se adjunta y no 
+se encuentra en el repositorio público. Debe incluir variables como:
+DB_HOST=... 
+DB_USER=... 
+DB_PASS=...
+DB_DATABASE_TERMINALES=terminales DB_DATABASE_ALMACEN=almacen 
+DB_DATABASE_NUDASOLA=nudasola
+ARCHIVO .env
+DB_HOST=192.168.1.81
+DB_PORT=3306
+DB_USER=consultas
+DB_PASS=consultas
+DB_NAME=z_felman2023
+JWT_SECRET=TU_SECRETO
+PORT=3000
+PROXY_URL=http://192.168.1.81:3001/api/pedidos
+OPENAI_API_KEY=sk-projk6DZsI0xWSuD6lK5StbWIVtDdYa09vssVFIkqcniyKMIPqtvP5Nh8KLABT0kwBgvmO_cv6
+6YGwT3BlbkFJw1rSBaMXZm8GrAb3bKWLY09HSqi2egmBt6W8hfXz04RxlKX9TOrfQfiX
+2p_XRh22elN4GJCkcA
+DB_HOST_TERMINALES=192.168.1.6
+DB_PORT=3306
+DB_USER=consultas
+DB_PASS=consultas
+DB_NAME_TERMINALES=terminales
+PROXY_URL_TERMINALES=http://192.168.1.6:3001/api/terminales
+DB_HOST_ALMACEN=192.168.1.81
+DB_PORT_ALMACEN=3306
+DB_USER_ALMACEN=jose
+DB_NAME_ALMACEN=almacen
+DB_PASS_ALMACEN=852456
+Inicio Automático del Proyecto con PM2
+Para levantar el proyecto manualmente:
+pm2 start index.js --name appFelmanBackendLinux
+Para guardar la configuración y que se inicie al arrancar el servidor:
+pm2 save pm2 startup
+Despliegue de Frontend Web (React Native Web)
+El frontend es construido con React Native y se compila para web con `expo export:web`. El resultado 
+(`index.html` y demás archivos) se coloca en la carpeta `dist/` de este backend para ser servido como contenido 
+estático desde ExpressJS.
+Relación entre Frontend, Backend Linux y Backend Windows
+- El frontend accede al backend Linux mediante la URL: http://85.59.105.234:3000 - El backend Linux realiza
+peticiones al backend Windows a través de: - POST http://192.168.1.81:3001/api/webhook Estas conexiones son 
+fundamentales para el funcionamiento correcto del sistema de pedidos y control de producción.
+Ruta principal del archivo de arranque
+/appFelmanBackendLinux/index.js
