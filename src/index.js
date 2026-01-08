@@ -216,7 +216,7 @@ app.use('/control-optima', controlOptimaRoutes);
 
 
 // GET /control-afix/cli/by-dni?dni=XXXXXXXXX
-router.get('control-afix/cli/by-dni', async (req, res) => {
+router.get('/control-afix/cli/by-dni', async (req, res) => {
   console.log('Se solicitó la ruta: /control-afix/cli/by-dni', req.query);
   try {
     const { dni } = req.query;
