@@ -1,6 +1,7 @@
 // src/services/informix.service.js
 const { spawn } = require('child_process');
-const fs = require('fs/promises');
+const fsPromises = require('fs/promises');
+const fs = require('fs'); // ✅ Importa fs síncrono también
 const path = require('path');
 
 const INFORMIXDIR = process.env.INFORMIXDIR || '/home/ix730';
@@ -34,7 +35,7 @@ ${sqlBody}
 
   await runDbaccess(sql);
 
-  const raw = await fs.readFile(tmp, 'utf8');
+  const raw = await fsPromises.readFile(tmp, 'utf8');
   const lines = raw.split(/\r?\n/).filter(Boolean);
   const rows = lines.map(line => {
     const parts = line.split(delimiter).map(s => s.trim());
@@ -44,7 +45,7 @@ ${sqlBody}
   });
 
   // limpieza del fichero temporal
-  try { await fs.unlink(tmp); } catch {}
+  try { await fsPromises.unlink(tmp); } catch {}
   return { rows, raw };
 }
 
@@ -74,7 +75,7 @@ async function runDbaccess(sql) {
 }
 
 /**
- * ENDPOINTS “SEGUROS” (plantillas):
+ * ENDPOINTS "SEGUROS" (plantillas):
  */
 async function ping() {
   const out = await runDbaccess(`select count(*) as c from systables;`);
@@ -94,7 +95,7 @@ where dni = '${dni.replace(/'/g, "''")}'
 
 async function searchClientesByRazonSocial(pattern) {
   // Informix SE usa MATCHES con comodines * y ?
-  // Si el usuario pasa texto normal, le añadimos * al final para “empieza por”
+  // Si el usuario pasa texto normal, le añadimos * al final para "empieza por"
   const safe = pattern.trim();
   const matches = safe.includes('*') || safe.includes('?') ? safe : `${safe}*`;
   const sqlBody = `
@@ -107,25 +108,9 @@ order by ras
   return unloadSelect({ sqlBody, columns, delimiter: ';' });
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+/**
+ * Ejecuta un SELECT arbitrario (SOLO LECTURA) y devuelve el output crudo del UNLOAD
+ */
 async function queryRawSelect(sqlIn) {
   const envInformix = {
     INFORMIXDIR: '/home/ix730',
@@ -140,6 +125,7 @@ async function queryRawSelect(sqlIn) {
     PATH: `${process.env.PATH || ''}:/home/ix730/bin:/home/ix730/lib`,
   };
 
+  // ✅ Usa fs síncrono para existsSync
   const dbaccessBin = fs.existsSync('/home/ix730/bin/dbaccess')
     ? '/home/ix730/bin/dbaccess'
     : '/usr/bin/dbaccess';
@@ -156,6 +142,7 @@ unload to '${outFile}' delimiter '|'
 ${sql}
 ;`.trim() + '\n';
 
+  // ✅ Usa fs síncrono para writeFileSync
   fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
 
   return new Promise((resolve, reject) => {
@@ -176,12 +163,15 @@ ${sql}
     child.on('close', code => {
       clearTimeout(killTimer);
       let payload = '';
+      
+      // ✅ Usa fs síncrono para existsSync y readFileSync
       try { 
         if (fs.existsSync(outFile)) {
           payload = fs.readFileSync(outFile, 'utf8'); 
         }
       } catch {}
 
+      // ✅ Usa fs síncrono para unlinkSync
       try { fs.unlinkSync(sqlFile); } catch {}
       try { fs.unlinkSync(outFile); } catch {}
 
@@ -195,8 +185,6 @@ ${sql}
     });
   });
 }
-
-
 
 module.exports = {
   ping,
