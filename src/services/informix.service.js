@@ -52,7 +52,6 @@ ${sqlBody}
 /**
  * Ejecuta cualquier SQL (por ejemplo un COUNT simple) y devuelve la salida RAW de dbaccess.
  * Útil para pings o consultas que no necesitan parseo.
- * IMPORTANTE: Este método usa bash -lc y SÍ FUNCIONA con UNLOAD
  */
 async function runDbaccess(sql) {
   return new Promise((resolve, reject) => {
@@ -111,10 +110,10 @@ order by ras
 
 /**
  * Ejecuta un SELECT arbitrario (SOLO LECTURA) y devuelve el output crudo del UNLOAD
- * SOLUCIÓN: Usa runDbaccess (bash -lc) que SÍ funciona, en lugar de dbaccess -e
+ * REPLICA EXACTA de runAfixSelect de index.js
  */
-
 async function queryRawSelect(sqlIn) {
+  // === ENTORNO INFORMIX idéntico a index.js ===
   const envInformix = {
     INFORMIXDIR: '/home/ix730',
     INFORMIXSERVER: 'afix4_tcp',
@@ -131,83 +130,59 @@ async function queryRawSelect(sqlIn) {
   const dbaccessBin = fs.existsSync('/home/ix730/bin/dbaccess')
     ? '/home/ix730/bin/dbaccess'
     : '/usr/bin/dbaccess';
-  
-  const DBNAME = 'apli01';
 
+  const DBNAME = 'apli01'; // SE resuelve vía DBPATH + INFORMIXSERVER
+
+  // === Archivos temporales ===
   const pid = process.pid;
   const rnd = Math.random().toString(36).slice(2);
   const sqlFile = `/tmp/node_afix_${pid}_${rnd}.sql`;
   const outFile = `/tmp/node_afix_${pid}_${rnd}.out`;
 
-  const sql = String(sqlIn).trim();
-  
-  // Script idéntico al de index.js
+  // Script SIN "database ...", como hacía afix_select
   const script = `
 unload to '${outFile}' delimiter '|'
-${sql}
+${String(sqlIn).trim()}
 ;`.trim() + '\n';
 
   fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
-  console.log('[AFIX] SQL file:', sqlFile);
+  console.log('[AFIX] sqlFile written', { sqlFile, outFile, bytes: script.length });
 
   return new Promise((resolve, reject) => {
     const start = Date.now();
     let child;
 
-    // Timeout de 15 segundos
-    const killTimer = setTimeout(() => { 
-      console.log('[AFIX] TIMEOUT - matando proceso');
-      try { 
-        if (child) {
-          child.kill('SIGKILL'); 
-          reject(new Error('Query timeout after 15s'));
-        }
-      } catch (e) {
-        console.error('[AFIX] Error killing process:', e);
-      }
-    }, 15000);
-    
-    // Ejecuta SIN -e, dejando que use @INFORMIXSERVER del script
-    console.log('[AFIX] Spawning:', dbaccessBin, DBNAME, sqlFile);
-    child = spawn(dbaccessBin, [DBNAME, sqlFile], { 
+    const killTimer = setTimeout(() => { try { child && child.kill('SIGKILL'); } catch {} }, 15000);
+
+    // dbaccess -e apli01 /tmp/script.sql  (SE usa DBPATH + INFORMIXSERVER)
+    child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], {
       env: { ...process.env, ...envInformix },
-      stdio: ['ignore', 'pipe', 'pipe']
     });
 
-    let out = ''; 
+    let out = '';
     let err = '';
-    child.stdout.on('data', c => {
-      out += c.toString('utf8');
-      console.log('[AFIX] stdout chunk:', c.toString('utf8').substring(0, 100));
-    });
-    child.stderr.on('data', c => {
-      err += c.toString('utf8');
-      console.log('[AFIX] stderr chunk:', c.toString('utf8').substring(0, 100));
-    });
+    child.stdout.on('data', c => out += c.toString('utf8'));
+    child.stderr.on('data', c => err += c.toString('utf8'));
 
     child.on('close', code => {
       clearTimeout(killTimer);
-      
+
       let payload = '';
       let outFileSize = 0;
-      
-      try { 
+      try {
         if (fs.existsSync(outFile)) {
           const buf = fs.readFileSync(outFile);
           outFileSize = buf.length;
           payload = buf.toString('utf8');
         }
-      } catch (readErr) {
-        console.error('[AFIX] Error reading output:', readErr);
-      }
+      } catch (_) {}
 
       // Limpieza
       try { fs.unlinkSync(sqlFile); } catch {}
       try { fs.unlinkSync(outFile); } catch {}
 
-      console.log('[AFIX] Process closed:', {
-        code, 
-        ms: Date.now() - start,
+      console.log('[AFIX] dbaccess:close', {
+        code, ms: Date.now() - start,
         stdout_len: out.length,
         stderr_len: err.length,
         outFileSize
@@ -225,17 +200,8 @@ ${sql}
 
       resolve(payload);
     });
-    
-    child.on('error', (spawnErr) => {
-      clearTimeout(killTimer);
-      console.error('[AFIX] Spawn error:', spawnErr);
-      reject(spawnErr);
-    });
   });
 }
-
-
-
 
 module.exports = {
   ping,
