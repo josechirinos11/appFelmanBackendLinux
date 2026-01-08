@@ -139,14 +139,17 @@ async function queryRawSelect(sqlIn) {
 
   const sql = String(sqlIn).trim();
   
-  // Script SIN "database ...", como hace runAfixSelect en index.js
-  const script = `
-unload to '${outFile}' delimiter '|'
+  // Script SIN "database ...", igual que index.js
+  const script = `unload to '${outFile}' delimiter '|'
 ${sql}
-;`.trim() + '\n';
+;`;
 
   fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
-  console.log('[AFIX] sqlFile written', { sqlFile, outFile, bytes: script.length });
+  
+  // ✅ DEBUG: Lee y muestra el contenido
+  const scriptContent = fs.readFileSync(sqlFile, 'utf8');
+  console.log('[AFIX] Script generado:\n---START---\n' + scriptContent + '\n---END---');
+  console.log('[AFIX] Ejecutando comando:', dbaccessBin, ['-e', DBNAME, sqlFile]);
 
   return new Promise((resolve, reject) => {
     const start = Date.now();
@@ -156,7 +159,6 @@ ${sql}
       try { child && child.kill('SIGKILL'); } catch {} 
     }, 15000);
     
-    // dbaccess -e apli01 /tmp/script.sql (SE usa DBPATH + INFORMIXSERVER)
     child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], { 
       env: { ...process.env, ...envInformix } 
     });
@@ -191,6 +193,10 @@ ${sql}
         stderr_len: err.length,
         outFileSize
       });
+      
+      // ✅ DEBUG: Muestra stdout y stderr
+      if (out) console.log('[AFIX] stdout:', out);
+      if (err) console.log('[AFIX] stderr:', err);
 
       if (code !== 0) {
         const detail = (err || out || '').trim();
