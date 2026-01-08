@@ -209,11 +209,39 @@ app.use('/control-almacen', controlAlmacenRoutes);
 app.use('/control-optima', controlOptimaRoutes);
 
 
-app.use('/control-afix', controlAfixRoutes);
+//app.use('/control-afix', controlAfixRoutes);
 //app.use('/control-afix-legacy', controlAfixLegacyRoutes);
 // === RUTA: buscar cliente por DNI/NIF/CIF exacto ===
 // ✅ AÑADE ESTA RUTA POST
 
+
+// GET /control-afix/cli/by-dni?dni=XXXXXXXXX
+router.get('control-afix/cli/by-dni', async (req, res) => {
+  console.log('Se solicitó la ruta: /control-afix/cli/by-dni', req.query);
+  try {
+    const { dni } = req.query;
+    if (!dni) {
+      return res.status(400).json({ ok: false, error: 'dni requerido' });
+    }
+    
+    const { rows } = await Afix.getClienteByDni(dni);
+    
+    // Formato consistente
+    return res.json({ 
+      ok: true, 
+      count: rows.length, 
+      data: rows.map(r => ({
+        rowid: r.cli,
+        ras: r.ras,
+        dni: r.dni,
+        telefono: r.te1,
+        email: r.e_mail
+      }))
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
 
 
 
