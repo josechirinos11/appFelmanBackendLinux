@@ -309,33 +309,58 @@ app.get('/control-afix/healthz', (req, res) => {
 // POST /control-afix/sql
 // Body JSON: { "sql": "select ...", "first": 200 }
 // Opcional: ?raw=1 para devolver líneas tal cual del UNLOAD
+// POST /control-afix/sql
+// Body JSON: { "sql": "select ...", "first": 200 }
+// Opcional: ?raw=1 para devolver líneas tal cual del UNLOAD
 app.post('/control-afix/sql', async (req, res) => {
+  console.log('POST /control-afix/sql', { body: req.body, query: req.query });
+  
   try {
     const sqlIn = String((req.body && req.body.sql) || '').trim();
-    // Definimos rawMode explícitamente al inicio
+    
+    // El límite "first" ahora lo aplicamos en Node.js, no en el SQL
+    const limitRows = Number.isFinite(+req.body?.first) 
+      ? Math.max(1, Math.min(5000, +req.body.first)) 
+      : 200;
+      
     const rawMode = String(req.query.raw || '') === '1';
 
     if (!sqlIn) {
       return res.status(400).json({ ok: false, error: 'sql requerido' });
     }
 
-    // Validaciones de seguridad
+    // 1. Validaciones de Seguridad (Solo SELECT)
     const banned = /\b(update|insert|delete|create|alter|drop|truncate|grant|revoke|load|unload|system|execute|call|database|start|stop)\b/i;
     if (banned.test(sqlIn)) {
       return res.status(400).json({ ok: false, error: 'solo se permite SELECT (bloqueado)' });
     }
+    if (!/^\s*select\b/i.test(sqlIn)) {
+      return res.status(400).json({ ok: false, error: 'solo se permite SELECT' });
+    }
 
-    // SQL CORREGIDO: Limpiamos y ejecutamos TAL CUAL (sin inyectar FIRST)
+    // 2. Limpieza básica del SQL
     let sql = sqlIn.replace(/;+$/,'');
     
+    // IMPORTANTE: No añadimos "FIRST" aquí porque tu Informix SE no lo soporta
     console.log('[AFIX] Ejecutando SQL:', sql);
+    
+    // 3. Ejecución en Informix
     const raw = await runAfixSelect(sql);
     
-    const lines = raw
+    // 4. Procesamiento de líneas y limpieza de ruido del motor
+    let lines = raw
       .split('\n')
       .map(s => s.trim())
       .filter(s => s && !/^Database (selected|closed)\./i.test(s) && !/row\(s\) unloaded/i.test(s));
 
+    // 5. Aplicar límite manual (Simulando el FIRST que no tiene SE)
+    // Esto evita que el JSON sea gigante si la tabla tiene miles de filas
+    if (lines.length > limitRows) {
+      console.log(`[AFIX] Truncando resultados de ${lines.length} a ${limitRows}`);
+      lines = lines.slice(0, limitRows);
+    }
+
+    // 6. Formato de respuesta
     if (rawMode) {
       return res.json({ ok: true, count: lines.length, rows_text: lines });
     }
