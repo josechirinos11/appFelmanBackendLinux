@@ -256,25 +256,20 @@ app.get('/control-afix/cli/by-dni', async (req, res) => {
 app.get('/control-afix/cli/search', async (req, res) => {
   try {
     let text = (req.query.text || '').trim();
-
-    // Validación: solo letras, números, espacios, .-_/ y comodines * ?
     if (!/^[A-Za-z0-9 \.\-_/*\?]+$/.test(text)) {
       return res.status(400).json({ ok: false, error: 'text inválido' });
     }
-
-    // Normalizamos doble espacio y recortamos
     text = text.replace(/\s+/g, ' ').toUpperCase();
 
-    // SQL: ras MATCHES 'PATRÓN' (usa * y ?)
-const sql = `
+    // SQL CORREGIDO: Eliminamos "first 50"
+    const sql = `
       select rowid, ras, dni, te1, e_mail
       from cli
       where upper(ras) matches '${text}'
       order by ras
-    `; // <-- Quitamos "first 50"
+    `;
 
     const raw = await runAfixSelect(sql);
-
     const lines = raw
       .split('\n')
       .map(s => s.trim())
@@ -315,31 +310,26 @@ app.get('/control-afix/healthz', (req, res) => {
 // Body JSON: { "sql": "select ...", "first": 200 }
 // Opcional: ?raw=1 para devolver líneas tal cual del UNLOAD
 app.post('/control-afix/sql', async (req, res) => {
-  console.log('POST /control-afix/sql', { body: req.body, query: req.query });
-  
-try {
+  try {
     const sqlIn = String((req.body && req.body.sql) || '').trim();
-    // Eliminamos la lógica de 'firstIn' ya que Informix SE no la soporta
-    
+    // Definimos rawMode explícitamente al inicio
+    const rawMode = String(req.query.raw || '') === '1';
+
     if (!sqlIn) {
       return res.status(400).json({ ok: false, error: 'sql requerido' });
     }
 
-    // Mantener validaciones de seguridad (banned, etc.)
+    // Validaciones de seguridad
     const banned = /\b(update|insert|delete|create|alter|drop|truncate|grant|revoke|load|unload|system|execute|call|database|start|stop)\b/i;
     if (banned.test(sqlIn)) {
       return res.status(400).json({ ok: false, error: 'solo se permite SELECT (bloqueado)' });
     }
 
-    // Ejecutar el SQL tal cual viene (sin inyectar FIRST)
+    // SQL CORREGIDO: Limpiamos y ejecutamos TAL CUAL (sin inyectar FIRST)
     let sql = sqlIn.replace(/;+$/,'');
-    const raw = await runAfixSelect(sql);
-
- 
-
-    console.log('[AFIX] Ejecutando SQL:', sql);
     
-
+    console.log('[AFIX] Ejecutando SQL:', sql);
+    const raw = await runAfixSelect(sql);
     
     const lines = raw
       .split('\n')
