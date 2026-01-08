@@ -1,7 +1,7 @@
 // src/services/informix.service.js
 const { spawn } = require('child_process');
 const fsPromises = require('fs/promises');
-const fs = require('fs'); // ✅ Importa fs síncrono también
+const fs = require('fs');
 const path = require('path');
 
 const INFORMIXDIR = process.env.INFORMIXDIR || '/home/ix730';
@@ -110,6 +110,7 @@ order by ras
 
 /**
  * Ejecuta un SELECT arbitrario (SOLO LECTURA) y devuelve el output crudo del UNLOAD
+ * Usa el mismo método que runAfixSelect en index.js que SÍ funciona
  */
 async function queryRawSelect(sqlIn) {
   const envInformix = {
@@ -125,10 +126,10 @@ async function queryRawSelect(sqlIn) {
     PATH: `${process.env.PATH || ''}:/home/ix730/bin:/home/ix730/lib`,
   };
 
-  // ✅ Usa fs síncrono para existsSync
   const dbaccessBin = fs.existsSync('/home/ix730/bin/dbaccess')
     ? '/home/ix730/bin/dbaccess'
     : '/usr/bin/dbaccess';
+  
   const DBNAME = 'apli01';
 
   const pid = process.pid;
@@ -137,20 +138,25 @@ async function queryRawSelect(sqlIn) {
   const outFile = `/tmp/node_afix_${pid}_${rnd}.out`;
 
   const sql = String(sqlIn).trim();
+  
+  // Script SIN "database ...", como hace runAfixSelect en index.js
   const script = `
 unload to '${outFile}' delimiter '|'
 ${sql}
 ;`.trim() + '\n';
 
-  // ✅ Usa fs síncrono para writeFileSync
   fs.writeFileSync(sqlFile, script, { encoding: 'utf8' });
+  console.log('[AFIX] sqlFile written', { sqlFile, outFile, bytes: script.length });
 
   return new Promise((resolve, reject) => {
+    const start = Date.now();
     let child;
+
     const killTimer = setTimeout(() => { 
       try { child && child.kill('SIGKILL'); } catch {} 
     }, 15000);
     
+    // dbaccess -e apli01 /tmp/script.sql (SE usa DBPATH + INFORMIXSERVER)
     child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], { 
       env: { ...process.env, ...envInformix } 
     });
@@ -162,25 +168,40 @@ ${sql}
 
     child.on('close', code => {
       clearTimeout(killTimer);
-      let payload = '';
       
-      // ✅ Usa fs síncrono para existsSync y readFileSync
+      let payload = '';
+      let outFileSize = 0;
+      
       try { 
         if (fs.existsSync(outFile)) {
-          payload = fs.readFileSync(outFile, 'utf8'); 
+          const buf = fs.readFileSync(outFile);
+          outFileSize = buf.length;
+          payload = buf.toString('utf8');
         }
       } catch {}
 
-      // ✅ Usa fs síncrono para unlinkSync
+      // Limpieza
       try { fs.unlinkSync(sqlFile); } catch {}
       try { fs.unlinkSync(outFile); } catch {}
 
+      console.log('[AFIX] dbaccess:close', {
+        code, 
+        ms: Date.now() - start,
+        stdout_len: out.length,
+        stderr_len: err.length,
+        outFileSize
+      });
+
       if (code !== 0) {
-        return reject(new Error((err || out || '').trim() || `dbaccess exited ${code}`));
+        const detail = (err || out || '').trim();
+        return reject(new Error(detail || `dbaccess exited with code ${code}`));
       }
+
       if (!payload) {
-        return reject(new Error((err || out || '').trim() || 'dbaccess ok pero sin datos'));
+        const detail = (err || out || '').trim() || 'dbaccess ok pero sin datos';
+        return reject(new Error(detail));
       }
+
       resolve(payload);
     });
   });
