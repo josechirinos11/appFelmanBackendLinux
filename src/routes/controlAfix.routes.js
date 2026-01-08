@@ -31,7 +31,7 @@ router.get('/cli/search', async (req, res) => {
 router.post('/sql', async (req, res) => {
   try {
     const sqlIn = String(req.body?.sql || '').trim();
-    const limitRows = Number(req.body?.first) || 1000;
+    const limitRows = Number(req.body?.first) || 20000;
     if (!/^\s*select\b/i.test(sqlIn)) return res.status(400).json({ ok: false, error: 'Solo SELECT' });
 
     const raw = await Afix.queryRawSelect(sqlIn);
