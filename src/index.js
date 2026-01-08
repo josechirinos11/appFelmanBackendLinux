@@ -212,34 +212,82 @@ app.use('/control-optima', controlOptimaRoutes);
 //app.use('/control-afix', controlAfixRoutes);
 //app.use('/control-afix-legacy', controlAfixLegacyRoutes);
 // === RUTA: buscar cliente por DNI/NIF/CIF exacto ===
-// ✅ AÑADE ESTA RUTA POST
-
-
-// GET /control-afix/cli/by-dni?dni=XXXXXXXXX
-router.get('/control-afix/cli/by-dni', async (req, res) => {
-  console.log('Se solicitó la ruta: /control-afix/cli/by-dni', req.query);
+// Ejemplo: GET /control-afix/cli/by-dni?dni=B46388690
+app.get('/control-afix/cli/by-dni', async (req, res) => {
   try {
-    const { dni } = req.query;
-    if (!dni) {
-      return res.status(400).json({ ok: false, error: 'dni requerido' });
+    const dni = (req.query.dni || '').trim();
+
+    // Validación estricta (evita inyección por shell/SQL)
+    if (!/^[A-Za-z0-9]+$/.test(dni)) {
+      return res.status(400).json({ ok: false, error: 'dni inválido' });
     }
-    
-    const { rows } = await Afix.getClienteByDni(dni);
-    
-    // Formato consistente
-    return res.json({ 
-      ok: true, 
-      count: rows.length, 
-      data: rows.map(r => ({
-        rowid: r.cli,
-        ras: r.ras,
-        dni: r.dni,
-        telefono: r.te1,
-        email: r.e_mail
-      }))
+
+    // Selecciona columnas útiles y estables
+    const sql = `
+      select rowid, ras, dni, te1, e_mail
+      from cli
+      where dni = '${dni}'
+    `;
+
+    // 🔧 AHORA usamos el helper que ya definiste arriba
+    const raw = await runAfixSelect(sql);
+
+    // Limpieza del ruido típico de afix_select
+    const lines = raw
+      .split('\n')
+      .map(s => s.trim())
+      .filter(s =>
+        s &&
+        !/^Database (selected|closed)\./i.test(s) &&
+        !/row\(s\) unloaded/i.test(s)
+      );
+
+    const data = lines.map(line => {
+      const [rowid, ras, dniVal, te1, email] = line.split('|');
+      return { rowid, ras, dni: dniVal, telefono: te1, email };
     });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err.message });
+
+    return res.json({ ok: true, count: data.length, data });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'afix_select falló', detail: e.message });
+  }
+});
+// Ej: GET /control-afix/cli/search?text=CRISTALERIA%2A
+app.get('/control-afix/cli/search', async (req, res) => {
+  try {
+    let text = (req.query.text || '').trim();
+
+    // Validación: solo letras, números, espacios, .-_/ y comodines * ?
+    if (!/^[A-Za-z0-9 \.\-_/*\?]+$/.test(text)) {
+      return res.status(400).json({ ok: false, error: 'text inválido' });
+    }
+
+    // Normalizamos doble espacio y recortamos
+    text = text.replace(/\s+/g, ' ').toUpperCase();
+
+    // SQL: ras MATCHES 'PATRÓN' (usa * y ?)
+    const sql = `
+      select first 50 rowid, ras, dni, te1, e_mail
+      from cli
+      where upper(ras) matches '${text}'
+      order by ras
+    `;
+
+    const raw = await runAfixSelect(sql);
+
+    const lines = raw
+      .split('\n')
+      .map(s => s.trim())
+      .filter(s => s && !/^Database (selected|closed)\./i.test(s) && !/row\(s\) unloaded/i.test(s));
+
+    const data = lines.map(line => {
+      const [rowid, ras, dni, te1, email] = line.split('|');
+      return { rowid, ras, dni, telefono: te1, email };
+    });
+
+    return res.json({ ok: true, count: data.length, data });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'afix_select falló', detail: e.message });
   }
 });
 
@@ -253,7 +301,14 @@ router.get('/control-afix/cli/by-dni', async (req, res) => {
 
 
 // --- HEALTH: no toca Informix, responde inmediato
-
+app.get('/control-afix/healthz', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'control-afix',
+    time: new Date().toISOString(),
+    pid: process.pid
+  });
+});
 
 
 
