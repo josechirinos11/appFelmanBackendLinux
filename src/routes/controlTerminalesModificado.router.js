@@ -6,6 +6,111 @@ const router = express.Router();
 
 /**
  * ============================================================================
+
+// GET /dashboard_pvc (ruta exclusiva)
+router.get('/dashboard_pvc', async (_req, res) => {
+  const sql = `
+    SELECT
+      x.*,
+      COALESCE(l.TotalUnidades, 0) AS TotalModulos,
+      GREATEST(
+        COALESCE(l.TotalUnidades, 0) - COALESCE(pm.ModulosProcesados, 0),
+        0
+      ) AS ModulosRestantes
+    FROM
+    (
+      (
+        SELECT
+            h.Serie, h.Numero, h.Fecha, h.CodigoOperario, h.OperarioNombre,
+            hl.CodigoSerie, hl.CodigoNumero, hl.Linea,
+            hl.FechaInicio, hl.HoraInicio, hl.FechaFin, hl.HoraFin,
+            hl.CodigoTarea, hl.NumeroManual, hl.Modulo,
+            hl.TiempoDedicado, hl.Abierta
+        FROM hpartes h
+        INNER JOIN hparteslineas hl
+          ON h.Serie = hl.CodigoSerie
+         AND h.Numero = hl.CodigoNumero
+        WHERE h.Fecha = CURDATE()
+          AND hl.Abierta = 1
+          AND h.CodigoOperario IN (
+            '004','020','025','036','037','038','040',  
+            '050','052','053','056','057','058','059','060','061','062',
+            '064','065','066'
+          )
+      )
+      UNION ALL
+      (
+        SELECT
+            p.Serie, p.Numero, p.Fecha, p.CodigoOperario, p.OperarioNombre,
+            pl.CodigoSerie, pl.CodigoNumero, pl.Linea,
+            pl.FechaInicio, pl.HoraInicio, pl.FechaFin, pl.HoraFin,
+            pl.CodigoTarea, pl.NumeroManual, pl.Modulo,
+            pl.TiempoDedicado, pl.Abierta
+        FROM partes p
+        INNER JOIN parteslineas pl
+          ON p.Serie = pl.CodigoSerie
+         AND p.Numero = pl.CodigoNumero
+        WHERE p.Fecha = CURDATE()
+          AND pl.Abierta = 1
+          AND p.CodigoOperario IN (
+            '004','020','025','036','037','038','040',  
+            '050','052','053','056','057','058','059','060','061','062',
+            '064','065','066'
+          )
+      )
+    ) AS x
+
+    LEFT JOIN (
+      SELECT
+        NumeroManual,
+        MAX(TotalUnidades) AS TotalUnidades
+      FROM Lotes
+      GROUP BY NumeroManual
+    ) AS l
+      ON l.NumeroManual = x.NumeroManual
+
+    LEFT JOIN
+    (
+      SELECT
+        s.NumeroManual,
+        COUNT(DISTINCT s.Modulo) AS ModulosProcesados
+      FROM (
+        SELECT NumeroManual, Modulo, FechaInicio
+        FROM hparteslineas
+        WHERE NumeroManual IS NOT NULL AND NumeroManual <> ''
+          AND Modulo IS NOT NULL AND Modulo <> ''
+
+        UNION ALL
+
+        SELECT NumeroManual, Modulo, FechaInicio
+        FROM parteslineas
+        WHERE NumeroManual IS NOT NULL AND NumeroManual <> ''
+          AND Modulo IS NOT NULL AND Modulo <> ''
+      ) AS s
+      WHERE s.FechaInicio IS NOT NULL
+        AND s.FechaInicio <> '0000-00-00'
+        AND s.FechaInicio <> '1970-01-01'
+      GROUP BY s.NumeroManual
+    ) AS pm
+      ON pm.NumeroManual = x.NumeroManual
+
+    ORDER BY x.FechaInicio DESC, x.HoraInicio DESC
+    LIMIT 0, 1000;
+  `;
+
+  try {
+    const [rows] = await pool.query(sql);
+    res.status(200).json(rows);
+  } catch (error) {
+    console.error('❌ ERROR EN /control-terminales/dashboard_pvc:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Error al obtener dashboard PVC',
+      detail: error.message,
+    });
+  }
+});
+
  * ARCHIVO OPTIMIZADO - controlTerminalesModificado.router.js
  * ============================================================================
  * 
