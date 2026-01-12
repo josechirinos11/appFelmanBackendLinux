@@ -1610,4 +1610,163 @@ router.post("/n8n_dashboard", async (req, res) => {
   }
 });
 
+
+router.get('/alerta', async (req, res) => {
+  const sql = `SELECT
+  pr.NoPedido,
+  pr.Compromiso,
+  pr.PedidoKey,
+
+  CASE WHEN fb.PedidoKey IS NULL THEN 0 ELSE 1 END AS EnFabricacion,
+  COALESCE(fb.TotalModulos, 0)      AS TotalModulos,
+  COALESCE(fb.ModulosRestantes, 0)  AS ModulosRestantes,
+  fb.UltimoInicio,
+
+CASE
+  WHEN fb.PedidoKey IS NULL
+    THEN '🔴 ALERTA: Pedido prioritario NO está en fabricación (hoy)'
+
+  WHEN COALESCE(fb.ModulosRestantes, 0) = 0
+    THEN '⚫ CERRADO: Sin módulos restantes'
+
+  WHEN DATE(pr.Compromiso) >= (CURDATE() + INTERVAL 7 DAY)
+    THEN '🔵 BAJA: En fabricación + fecha lejana'
+
+  WHEN COALESCE(fb.ModulosRestantes, 0) >= 5
+    THEN '🟡 PRIORIDAD: En fabricación + muchos módulos'
+
+  ELSE
+    '🟢 CASI OK: En fabricación + pocos módulos'
+END AS Estado
+
+
+
+FROM
+(
+  SELECT
+    p.NoPedido,
+    p.Compromiso,
+    CONCAT(
+      SUBSTRING_INDEX(p.NoPedido, '-', 1), '_',
+      SUBSTRING_INDEX(SUBSTRING_INDEX(p.NoPedido, '-', 2), '-', -1), '_',
+      CAST(SUBSTRING_INDEX(p.NoPedido, '-', -1) AS UNSIGNED)
+    ) AS PedidoKey
+  FROM n8n_pedidos p
+  WHERE p.Seccion = 'ALUMINIO'
+) pr
+
+LEFT JOIN
+(
+  SELECT
+    fx.PedidoKey,
+    MAX(lx.TotalUnidades) AS TotalModulos,
+    GREATEST(MAX(lx.TotalUnidades) - COALESCE(px.ModulosProcesados, 0), 0) AS ModulosRestantes,
+    MAX(CONCAT(fx.FechaInicio, ' ', fx.HoraInicio)) AS UltimoInicio
+  FROM
+  (
+    SELECT
+      CONCAT(
+        SUBSTRING_INDEX(hl.NumeroManual, '_', 1), '_',
+        SUBSTRING_INDEX(SUBSTRING_INDEX(hl.NumeroManual, '_', 2), '_', -1), '_',
+        CAST(SUBSTRING_INDEX(hl.NumeroManual, '_', -1) AS UNSIGNED)
+      ) AS PedidoKey,
+      hl.NumeroManual,
+      hl.FechaInicio,
+      hl.HoraInicio
+    FROM hpartes h
+    INNER JOIN hparteslineas hl
+      ON h.Serie = hl.CodigoSerie
+     AND h.Numero = hl.CodigoNumero
+    WHERE h.Fecha = CURDATE()
+      AND hl.Abierta = 1
+      AND hl.NumeroManual IS NOT NULL AND hl.NumeroManual <> ''
+
+    UNION ALL
+
+    SELECT
+      CONCAT(
+        SUBSTRING_INDEX(pl.NumeroManual, '_', 1), '_',
+        SUBSTRING_INDEX(SUBSTRING_INDEX(pl.NumeroManual, '_', 2), '_', -1), '_',
+        CAST(SUBSTRING_INDEX(pl.NumeroManual, '_', -1) AS UNSIGNED)
+      ) AS PedidoKey,
+      pl.NumeroManual,
+      pl.FechaInicio,
+      pl.HoraInicio
+    FROM partes p
+    INNER JOIN parteslineas pl
+      ON p.Serie = pl.CodigoSerie
+     AND p.Numero = pl.CodigoNumero
+    WHERE p.Fecha = CURDATE()
+      AND pl.Abierta = 1
+      AND pl.NumeroManual IS NOT NULL AND pl.NumeroManual <> ''
+  ) fx
+
+  LEFT JOIN (
+    SELECT NumeroManual, MAX(TotalUnidades) AS TotalUnidades
+    FROM Lotes
+    GROUP BY NumeroManual
+  ) lx
+    ON lx.NumeroManual = fx.NumeroManual
+
+  LEFT JOIN (
+    SELECT
+      CONCAT(
+        SUBSTRING_INDEX(s.NumeroManual, '_', 1), '_',
+        SUBSTRING_INDEX(SUBSTRING_INDEX(s.NumeroManual, '_', 2), '_', -1), '_',
+        CAST(SUBSTRING_INDEX(s.NumeroManual, '_', -1) AS UNSIGNED)
+      ) AS PedidoKey,
+      COUNT(DISTINCT s.Modulo) AS ModulosProcesados
+    FROM (
+      SELECT NumeroManual, Modulo, FechaInicio
+      FROM hparteslineas
+      WHERE NumeroManual IS NOT NULL AND NumeroManual <> ''
+        AND Modulo IS NOT NULL AND Modulo <> ''
+
+      UNION ALL
+
+      SELECT NumeroManual, Modulo, FechaInicio
+      FROM parteslineas
+      WHERE NumeroManual IS NOT NULL AND NumeroManual <> ''
+        AND Modulo IS NOT NULL AND Modulo <> ''
+    ) s
+    WHERE s.FechaInicio IS NOT NULL
+      AND s.FechaInicio <> '0000-00-00'
+      AND s.FechaInicio <> '1970-01-01'
+    GROUP BY
+      CONCAT(
+        SUBSTRING_INDEX(s.NumeroManual, '_', 1), '_',
+        SUBSTRING_INDEX(SUBSTRING_INDEX(s.NumeroManual, '_', 2), '_', -1), '_',
+        CAST(SUBSTRING_INDEX(s.NumeroManual, '_', -1) AS UNSIGNED)
+      )
+  ) px
+    ON px.PedidoKey = fx.PedidoKey
+
+  GROUP BY fx.PedidoKey
+) fb
+  ON fb.PedidoKey = pr.PedidoKey
+
+ORDER BY
+  DATE(pr.Compromiso) ASC,
+  COALESCE(fb.ModulosRestantes, 0) DESC,
+  pr.NoPedido ASC
+LIMIT 0, 1000`;
+  try {
+    const [rows] = await pool.query(sql);
+    res.json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error al obtener la alerta de pedidos' });
+  }
+});
+
+router.get('/lista_pepdidos_a_procesar', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM n8n_pedidos');
+    res.json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error al obtener la lista de pedidos a procesar' });
+  }
+});
+
 module.exports = router;
