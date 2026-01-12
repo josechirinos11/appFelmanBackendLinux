@@ -9,6 +9,7 @@ router.get("/dashboard_pvc", async (_req, res) => {
   const sql = `
     SELECT
       x.*,
+      cl.Cliente,
       COALESCE(l.TotalUnidades, 0) AS TotalModulos,
       GREATEST(
         COALESCE(l.TotalUnidades, 0) - COALESCE(pm.ModulosProcesados, 0),
@@ -206,10 +207,7 @@ router.get("/dashboard_aluminio", async (_req, res) => {
     const [rows] = await pool.query(sql);
     res.status(200).json(rows);
   } catch (error) {
-    console.error(
-      "❌ ERROR EN /control-terminales/dashboard_aluminio:",
-      error
-    );
+    console.error("❌ ERROR EN /control-terminales/dashboard_aluminio:", error);
     res.status(500).json({
       status: "error",
       message: "Error al obtener dashboard de aluminio",
@@ -217,7 +215,6 @@ router.get("/dashboard_aluminio", async (_req, res) => {
     });
   }
 });
-
 
 /**
  * POST /control-terminales/sql
@@ -1150,12 +1147,10 @@ router.get("/reporte", async (req, res) => {
     );
 
     if (loteRows.length === 0) {
-      return res
-        .status(404)
-        .json({
-          status: "error",
-          message: "Lote no encontrado para el NumeroManual proporcionado",
-        });
+      return res.status(404).json({
+        status: "error",
+        message: "Lote no encontrado para el NumeroManual proporcionado",
+      });
     }
 
     const codigoLote = loteRows[0].Codigo;
@@ -1492,12 +1487,10 @@ router.post("/n8n_dashboard", async (req, res) => {
   const { pedidos } = req.body ?? {};
 
   if (!Array.isArray(pedidos)) {
-    return res
-      .status(400)
-      .json({
-        status: "error",
-        message: "Body inválido. Se espera { pedidos: [...] }",
-      });
+    return res.status(400).json({
+      status: "error",
+      message: "Body inválido. Se espera { pedidos: [...] }",
+    });
   }
 
   const conn = await pool.getConnection();
@@ -1611,8 +1604,7 @@ router.post("/n8n_dashboard", async (req, res) => {
   }
 });
 
-
-router.get('/alerta', async (req, res) => {
+router.get("/alerta", async (req, res) => {
   const sql = `SELECT
   pr.NoPedido,
   pr.Compromiso,
@@ -1756,17 +1748,19 @@ LIMIT 0, 1000`;
     res.json(rows);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Error al obtener la alerta de pedidos' });
+    res.status(500).json({ message: "Error al obtener la alerta de pedidos" });
   }
 });
 
-router.get('/lista_pepdidos_a_procesar', async (req, res) => {
+router.get("/lista_pepdidos_a_procesar", async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM n8n_pedidos');
+    const [rows] = await pool.query("SELECT * FROM n8n_pedidos");
     res.json(rows);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Error al obtener la lista de pedidos a procesar' });
+    res
+      .status(500)
+      .json({ message: "Error al obtener la lista de pedidos a procesar" });
   }
 });
 
