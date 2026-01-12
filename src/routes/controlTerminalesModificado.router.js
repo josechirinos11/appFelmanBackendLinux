@@ -9,7 +9,6 @@ router.get("/dashboard_pvc", async (_req, res) => {
   const sql = `
     SELECT
       x.*,
-      cl.Cliente,
       COALESCE(l.TotalUnidades, 0) AS TotalModulos,
       GREATEST(
         COALESCE(l.TotalUnidades, 0) - COALESCE(pm.ModulosProcesados, 0),
