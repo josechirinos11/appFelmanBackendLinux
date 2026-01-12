@@ -9,6 +9,7 @@ router.get("/dashboard_pvc", async (_req, res) => {
   const sql = `
     SELECT
       x.*,
+      cl.Cliente,
       COALESCE(l.TotalUnidades, 0) AS TotalModulos,
       GREATEST(
         COALESCE(l.TotalUnidades, 0) - COALESCE(pm.ModulosProcesados, 0),
@@ -56,6 +57,17 @@ router.get("/dashboard_pvc", async (_req, res) => {
           )
       )
     ) AS x
+
+    LEFT JOIN (
+      SELECT
+        FabricacionNumeroManual AS NumeroManual,
+        MAX(Cliente) AS Cliente
+      FROM loteslineas
+      WHERE FabricacionNumeroManual IS NOT NULL
+        AND FabricacionNumeroManual <> ''
+      GROUP BY FabricacionNumeroManual
+    ) AS cl
+      ON cl.NumeroManual = x.NumeroManual
 
     LEFT JOIN (
       SELECT
