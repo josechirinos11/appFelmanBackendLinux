@@ -1763,6 +1763,224 @@ LIMIT 0, 1000`;
   }
 });
 
+/**
+ * ============================================================================
+ * OPTIMIZACIÓN #9: /alerta2 - SEVERIDAD ALTA
+ * ============================================================================
+ *
+ * MEJORAS SOBRE /alerta:
+ * - Búsqueda histórica de fabricación (no solo hoy)
+ * - Incluye antigüedad del pedido (días desde FechaEnvio)
+ * - Priorización mejorada considerando:
+ *   * Días hasta compromiso
+ *   * Antigüedad del pedido
+ *   * Estado de fabricación (histórico vs actual)
+ *   * Módulos restantes
+ * - Última fecha de fabricación registrada
+ *
+ * COLUMNAS ADICIONALES:
+ * - DiasDesdeEnvio: antigüedad del pedido
+ * - DiasHastaCompromiso: días faltantes para compromiso
+ * - UltimaFabricacion: última fecha registrada de trabajo
+ * - SeHaFabricado: 1 si tiene historial, 0 si nunca se fabricó
+ * ============================================================================
+ */
+router.get("/alerta2", async (req, res) => {
+  const sql = `SELECT
+  pr.NoPedido,
+  pr.FechaEnvio,
+  pr.Compromiso,
+  pr.PedidoKey,
+  pr.Cliente,
+  pr.Comercial,
+  pr.RefCliente,
+  
+  -- Antigüedad del pedido
+  DATEDIFF(CURDATE(), pr.FechaEnvio) AS DiasDesdeEnvio,
+  DATEDIFF(pr.Compromiso, CURDATE()) AS DiasHastaCompromiso,
+
+  CASE WHEN fb.PedidoKey IS NULL THEN 0 ELSE 1 END AS SeHaFabricado,
+  COALESCE(fb.TotalModulos, 0) AS TotalModulos,
+  COALESCE(fb.ModulosRestantes, 0) AS ModulosRestantes,
+  fb.UltimaFabricacion,
+  fb.UltimoInicio,
+  
+  -- Estado mejorado con más criterios
+  CASE
+    -- 🔴 CRÍTICO: Nunca fabricado + compromiso vencido/próximo
+    WHEN fb.PedidoKey IS NULL AND DATEDIFF(pr.Compromiso, CURDATE()) <= 0
+      THEN '🔴 CRÍTICO: NO fabricado + compromiso VENCIDO'
+    
+    WHEN fb.PedidoKey IS NULL AND DATEDIFF(pr.Compromiso, CURDATE()) BETWEEN 1 AND 3
+      THEN '🔴 URGENTE: NO fabricado + compromiso en 1-3 días'
+    
+    WHEN fb.PedidoKey IS NULL AND DATEDIFF(pr.Compromiso, CURDATE()) BETWEEN 4 AND 7
+      THEN '🟠 ALERTA: NO fabricado + compromiso en 4-7 días'
+    
+    WHEN fb.PedidoKey IS NULL
+      THEN '🟡 PENDIENTE: NO fabricado + compromiso lejano'
+    
+    -- Fabricado pero evaluando progreso
+    WHEN COALESCE(fb.ModulosRestantes, 0) = 0
+      THEN '✅ COMPLETADO: Todos los módulos fabricados'
+    
+    WHEN DATEDIFF(pr.Compromiso, CURDATE()) <= 0 AND COALESCE(fb.ModulosRestantes, 0) > 0
+      THEN '🔴 CRÍTICO: Compromiso vencido + módulos pendientes'
+    
+    WHEN DATEDIFF(pr.Compromiso, CURDATE()) BETWEEN 1 AND 3 AND COALESCE(fb.ModulosRestantes, 0) >= 5
+      THEN '🟠 URGENTE: Compromiso próximo + muchos módulos'
+    
+    WHEN DATEDIFF(pr.Compromiso, CURDATE()) BETWEEN 1 AND 3
+      THEN '🟡 MONITOREAR: Compromiso próximo + pocos módulos'
+    
+    WHEN COALESCE(fb.ModulosRestantes, 0) >= 10
+      THEN '🟡 PRIORIDAD: Muchos módulos pendientes'
+    
+    WHEN DATEDIFF(pr.Compromiso, CURDATE()) >= 14
+      THEN '🔵 NORMAL: En fabricación + compromiso lejano'
+    
+    ELSE '🟢 EN CURSO: Progreso adecuado'
+  END AS Estado
+
+FROM
+(
+  SELECT
+    p.NoPedido,
+    p.FechaEnvio,
+    p.Compromiso,
+    p.Cliente,
+    p.Comercial,
+    p.RefCliente,
+    CONCAT(
+      SUBSTRING_INDEX(p.NoPedido, '-', 1), '_',
+      SUBSTRING_INDEX(SUBSTRING_INDEX(p.NoPedido, '-', 2), '-', -1), '_',
+      CAST(SUBSTRING_INDEX(p.NoPedido, '-', -1) AS UNSIGNED)
+    ) AS PedidoKey
+  FROM n8n_pedidos p
+  WHERE p.Seccion = 'ALUMINIO'
+) pr
+
+LEFT JOIN
+(
+  SELECT
+    fx.PedidoKey,
+    MAX(lx.TotalUnidades) AS TotalModulos,
+    GREATEST(MAX(lx.TotalUnidades) - COALESCE(px.ModulosProcesados, 0), 0) AS ModulosRestantes,
+    MAX(fx.FechaInicio) AS UltimaFabricacion,
+    MAX(CONCAT(fx.FechaInicio, ' ', fx.HoraInicio)) AS UltimoInicio
+  FROM
+  (
+    -- 🔥 CAMBIO: Búsqueda HISTÓRICA (sin filtro de CURDATE())
+    SELECT
+      CONCAT(
+        SUBSTRING_INDEX(hl.NumeroManual, '_', 1), '_',
+        SUBSTRING_INDEX(SUBSTRING_INDEX(hl.NumeroManual, '_', 2), '_', -1), '_',
+        CAST(SUBSTRING_INDEX(hl.NumeroManual, '_', -1) AS UNSIGNED)
+      ) AS PedidoKey,
+      hl.NumeroManual,
+      hl.FechaInicio,
+      hl.HoraInicio
+    FROM hpartes h
+    INNER JOIN hparteslineas hl
+      ON h.Serie = hl.CodigoSerie
+     AND h.Numero = hl.CodigoNumero
+    WHERE hl.NumeroManual IS NOT NULL AND hl.NumeroManual <> ''
+      AND hl.FechaInicio IS NOT NULL
+      AND hl.FechaInicio <> '0000-00-00'
+      AND hl.FechaInicio <> '1970-01-01'
+
+    UNION ALL
+
+    SELECT
+      CONCAT(
+        SUBSTRING_INDEX(pl.NumeroManual, '_', 1), '_',
+        SUBSTRING_INDEX(SUBSTRING_INDEX(pl.NumeroManual, '_', 2), '_', -1), '_',
+        CAST(SUBSTRING_INDEX(pl.NumeroManual, '_', -1) AS UNSIGNED)
+      ) AS PedidoKey,
+      pl.NumeroManual,
+      pl.FechaInicio,
+      pl.HoraInicio
+    FROM partes p
+    INNER JOIN parteslineas pl
+      ON p.Serie = pl.CodigoSerie
+     AND p.Numero = pl.CodigoNumero
+    WHERE pl.NumeroManual IS NOT NULL AND pl.NumeroManual <> ''
+      AND pl.FechaInicio IS NOT NULL
+      AND pl.FechaInicio <> '0000-00-00'
+      AND pl.FechaInicio <> '1970-01-01'
+  ) fx
+
+  LEFT JOIN (
+    SELECT NumeroManual, MAX(TotalUnidades) AS TotalUnidades
+    FROM Lotes
+    GROUP BY NumeroManual
+  ) lx
+    ON lx.NumeroManual = fx.NumeroManual
+
+  LEFT JOIN (
+    SELECT
+      CONCAT(
+        SUBSTRING_INDEX(s.NumeroManual, '_', 1), '_',
+        SUBSTRING_INDEX(SUBSTRING_INDEX(s.NumeroManual, '_', 2), '_', -1), '_',
+        CAST(SUBSTRING_INDEX(s.NumeroManual, '_', -1) AS UNSIGNED)
+      ) AS PedidoKey,
+      COUNT(DISTINCT s.Modulo) AS ModulosProcesados
+    FROM (
+      SELECT NumeroManual, Modulo, FechaInicio
+      FROM hparteslineas
+      WHERE NumeroManual IS NOT NULL AND NumeroManual <> ''
+        AND Modulo IS NOT NULL AND Modulo <> ''
+        AND FechaInicio IS NOT NULL
+        AND FechaInicio <> '0000-00-00'
+        AND FechaInicio <> '1970-01-01'
+
+      UNION ALL
+
+      SELECT NumeroManual, Modulo, FechaInicio
+      FROM parteslineas
+      WHERE NumeroManual IS NOT NULL AND NumeroManual <> ''
+        AND Modulo IS NOT NULL AND Modulo <> ''
+        AND FechaInicio IS NOT NULL
+        AND FechaInicio <> '0000-00-00'
+        AND FechaInicio <> '1970-01-01'
+    ) s
+    GROUP BY
+      CONCAT(
+        SUBSTRING_INDEX(s.NumeroManual, '_', 1), '_',
+        SUBSTRING_INDEX(SUBSTRING_INDEX(s.NumeroManual, '_', 2), '_', -1), '_',
+        CAST(SUBSTRING_INDEX(s.NumeroManual, '_', -1) AS UNSIGNED)
+      )
+  ) px
+    ON px.PedidoKey = fx.PedidoKey
+
+  GROUP BY fx.PedidoKey
+) fb
+  ON fb.PedidoKey = pr.PedidoKey
+
+-- Ordenar por criticidad: compromiso más cercano primero, luego por módulos pendientes
+ORDER BY
+  CASE
+    WHEN fb.PedidoKey IS NULL THEN 0  -- Sin fabricar primero
+    ELSE 1
+  END,
+  DATEDIFF(pr.Compromiso, CURDATE()) ASC,  -- Compromiso más urgente
+  COALESCE(fb.ModulosRestantes, 999) DESC,  -- Más módulos pendientes
+  pr.FechaEnvio ASC  -- Más antiguos primero
+LIMIT 0, 1000`;
+
+  try {
+    const [rows] = await pool.query(sql);
+    res.json(rows);
+  } catch (error) {
+    console.error("❌ ERROR EN /control-terminales/alerta2:", error);
+    res.status(500).json({ 
+      status: "error",
+      message: "Error al obtener alerta mejorada de pedidos",
+      detail: error.message 
+    });
+  }
+});
+
 router.get("/lista_pepdidos_a_procesar", async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT * FROM n8n_pedidos");
