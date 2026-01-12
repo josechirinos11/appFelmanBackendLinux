@@ -1,14 +1,11 @@
 const express = require("express");
 const pool = require("../config/databaseTerminales");
-const logger = require('../utils/logger');
+const logger = require("../utils/logger");
 
 const router = express.Router();
 
-/**
- * ============================================================================
-
 // GET /dashboard_pvc (ruta exclusiva)
-router.get('/dashboard_pvc', async (_req, res) => {
+router.get("/dashboard_pvc", async (_req, res) => {
   const sql = `
     SELECT
       x.*,
@@ -102,57 +99,44 @@ router.get('/dashboard_pvc', async (_req, res) => {
     const [rows] = await pool.query(sql);
     res.status(200).json(rows);
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/dashboard_pvc:', error);
+    console.error("❌ ERROR EN /control-terminales/dashboard_pvc:", error);
     res.status(500).json({
-      status: 'error',
-      message: 'Error al obtener dashboard PVC',
+      status: "error",
+      message: "Error al obtener dashboard PVC",
       detail: error.message,
     });
   }
 });
-
- * ARCHIVO OPTIMIZADO - controlTerminalesModificado.router.js
- * ============================================================================
- * 
- * OPTIMIZACIONES IMPLEMENTADAS:
- * 1. Filtrado en SQL, no en JavaScript
- * 2. Proyección selectiva - Solo columnas necesarias
- * 3. Paginación con LIMIT/OFFSET
- * 4. Agregaciones en BD
- * 5. Reducción de UNION ALL masivos
- * 
- * IMPACTO ESPERADO:
- * - Reducción del 90% en transferencia de datos
- * - Tiempo de respuesta: 2-5s → 100-300ms
- * - Menor carga en el cliente
- * ============================================================================
- */
 
 /**
  * POST /control-terminales/sql
  * Ejecuta una consulta SQL de SOLO LECTURA (SELECT) contra la BD de Terminales.
  * Body: { "query": "SELECT ..."}
  */
-router.post('/sql', async (req, res) => {
+router.post("/sql", async (req, res) => {
   const { query } = req.body;
-  if (!query || typeof query !== 'string') {
-    return res.status(400).json({ status: 'error', message: 'Falta la consulta SQL en el cuerpo' });
+  if (!query || typeof query !== "string") {
+    return res
+      .status(400)
+      .json({ status: "error", message: "Falta la consulta SQL en el cuerpo" });
   }
 
   // Protección básica: sólo SELECT (evita UPDATE/DELETE/DDL).
   const q = query.trim();
   if (!/^select\b/i.test(q)) {
-    return res.status(400).json({ status: 'error', message: 'Solo se permiten consultas SELECT' });
+    return res
+      .status(400)
+      .json({ status: "error", message: "Solo se permiten consultas SELECT" });
   }
 
   try {
     const [rows] = await pool.query(q);
     return res.status(200).json(rows);
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/sql:', error);
+    console.error("❌ ERROR EN /control-terminales/sql:", error);
     return res.status(500).json({
-      status: 'error',
-      message: 'Error al ejecutar la consulta',
+      status: "error",
+      message: "Error al ejecutar la consulta",
       detail: error.message,
     });
   }
@@ -176,18 +160,18 @@ router.get("/inicio", async (req, res) => {
  * ============================================================================
  * OPTIMIZACIÓN #1: /lotes - SEVERIDAD ALTA
  * ============================================================================
- * 
+ *
  * ANTES:
  * - Traía TODOS los lotes sin filtros (~2000 registros)
  * - Frontend filtraba por Fabricado, FechaRealInicio, búsqueda
  * - 15 columnas TareaInicio/TareaFinal pesadas
- * 
+ *
  * DESPUÉS:
  * - Filtrado en SQL según status y search
  * - Solo columnas necesarias
  * - Paginación con limit/offset
  * - Reducción: 2000 → 100 registros (95% menos)
- * 
+ *
  * Query params:
  * - status: 'Todo' | 'Fabricado' | 'En Fabricacion' | 'En Cola'
  * - search: string (búsqueda en NumeroManual, Descripcion, Fabricado)
@@ -197,39 +181,35 @@ router.get("/inicio", async (req, res) => {
  */
 router.get("/lotes", async (req, res) => {
   try {
-    const { 
-      status = 'Todo', 
-      search = '', 
-      limit = 100, 
-      offset = 0 
-    } = req.query;
+    const { status = "Todo", search = "", limit = 100, offset = 0 } = req.query;
 
     // Construir condiciones WHERE dinámicamente
     let whereConditions = [];
     let params = [];
 
     // Filtro por status
-    if (status === 'Fabricado') {
-      whereConditions.push('Fabricado != 0');
-    } else if (status === 'En Fabricacion') {
-      whereConditions.push('Fabricado = 0 AND FechaRealInicio IS NOT NULL');
-    } else if (status === 'En Cola') {
-      whereConditions.push('Fabricado = 0 AND FechaRealInicio IS NULL');
+    if (status === "Fabricado") {
+      whereConditions.push("Fabricado != 0");
+    } else if (status === "En Fabricacion") {
+      whereConditions.push("Fabricado = 0 AND FechaRealInicio IS NOT NULL");
+    } else if (status === "En Cola") {
+      whereConditions.push("Fabricado = 0 AND FechaRealInicio IS NULL");
     }
     // Si status === 'Todo', no agregamos filtro
 
     // Filtro por búsqueda
-    if (search && search.trim() !== '') {
+    if (search && search.trim() !== "") {
       const searchTerm = `%${search.trim()}%`;
       whereConditions.push(
-        '(NumeroManual LIKE ? OR Descripcion LIKE ? OR CAST(Fabricado AS CHAR) LIKE ?)'
+        "(NumeroManual LIKE ? OR Descripcion LIKE ? OR CAST(Fabricado AS CHAR) LIKE ?)"
       );
       params.push(searchTerm, searchTerm, searchTerm);
     }
 
-    const whereClause = whereConditions.length > 0 
-      ? `WHERE ${whereConditions.join(' AND ')}` 
-      : '';
+    const whereClause =
+      whereConditions.length > 0
+        ? `WHERE ${whereConditions.join(" AND ")}`
+        : "";
 
     // Solo seleccionar tareas relevantes (1,2,3,4,6,7,9,10,11,12)
     const sql = `
@@ -277,8 +257,8 @@ router.get("/lotes", async (req, res) => {
         total: countResult[0].total,
         limit: parseInt(limit),
         offset: parseInt(offset),
-        hasMore: (parseInt(offset) + parseInt(limit)) < countResult[0].total
-      }
+        hasMore: parseInt(offset) + parseInt(limit) < countResult[0].total,
+      },
     });
   } catch (error) {
     console.error("❌ ERROR EN /control-terminales/lotes:", error);
@@ -290,11 +270,11 @@ router.get("/lotes", async (req, res) => {
  * ============================================================================
  * OPTIMIZACIÓN #2: /loteslineas - SEVERIDAD MEDIA
  * ============================================================================
- * 
+ *
  * ANTES:
  * - 15 campos CodigoTarea, TareaInicio, TareaFinal
  * - Frontend calculaba estadoTiempos con N llamadas a /tiempos-acumulados-modulo
- * 
+ *
  * DESPUÉS:
  * - Incluye estadoTiempos calculado en SQL
  * - Solo columnas necesarias
@@ -304,9 +284,9 @@ router.get("/lotes", async (req, res) => {
 router.get("/loteslineas", async (req, res) => {
   const { num_manual } = req.query;
   if (!num_manual) {
-    return res.status(400).json({ 
-      status: "error", 
-      message: "Falta num_manual" 
+    return res.status(400).json({
+      status: "error",
+      message: "Falta num_manual",
     });
   }
 
@@ -374,11 +354,11 @@ router.get("/loteslineas", async (req, res) => {
  * ============================================================================
  * OPTIMIZACIÓN #3: /tiempos-acumulados-modulo - SEVERIDAD ALTA
  * ============================================================================
- * 
+ *
  * ANTES:
  * - 20 UNION ALL con 40 parámetros repetidos
  * - Frontend lo llamaba múltiples veces (una por módulo)
- * 
+ *
  * DESPUÉS:
  * - Usa CROSS JOIN con tabla de números simulada
  * - Una sola query eficiente
@@ -449,44 +429,44 @@ router.get("/tiempos-acumulados-modulo", async (req, res) => {
  * ============================================================================
  * OPTIMIZACIÓN #4: /tiempo-real-nueva - SEVERIDAD CRÍTICA
  * ============================================================================
- * 
+ *
  * ANTES:
  * - UNION sin filtros traía TODO el historial de hpartes + partes
  * - Solo filtraba WHERE Fecha = CURDATE() después del UNION
  * - Frontend agrupaba/filtraba/calculaba estadísticas en JS
- * 
+ *
  * DESPUÉS:
  * - Filtrado ANTES del UNION
  * - UNION ALL para evitar deduplicación innecesaria
  * - Acepta parámetros de filtrado (operador, tarea, pedido)
  * - Reducción: 5000 → 50-100 registros (98% menos)
- * 
+ *
  * Query params:
  * - operador: string (opcional, filtra por OperarioNombre)
  * - tarea: number (opcional, filtra por CodigoTarea)
  * - pedido: string (opcional, filtra por NumeroManual)
  * ============================================================================
  */
-router.get('/tiempo-real-nueva2', async (req, res) => {
-  console.log('PETICION para tiempo-real-nueva TERMINALES');
-  
+router.get("/tiempo-real-nueva2", async (req, res) => {
+  console.log("PETICION para tiempo-real-nueva TERMINALES");
+
   try {
     const { operador, tarea, pedido } = req.query;
 
     // Construir condiciones WHERE adicionales
-    let additionalWhere = '';
+    let additionalWhere = "";
     let params = [];
 
     if (operador) {
-      additionalWhere += ' AND h.OperarioNombre LIKE ?';
+      additionalWhere += " AND h.OperarioNombre LIKE ?";
       params.push(`%${operador}%`);
     }
     if (tarea) {
-      additionalWhere += ' AND hl.CodigoTarea = ?';
+      additionalWhere += " AND hl.CodigoTarea = ?";
       params.push(tarea);
     }
     if (pedido) {
-      additionalWhere += ' AND hl.NumeroManual LIKE ?';
+      additionalWhere += " AND hl.NumeroManual LIKE ?";
       params.push(`%${pedido}%`);
     }
 
@@ -515,30 +495,32 @@ router.get('/tiempo-real-nueva2', async (req, res) => {
       INNER JOIN parteslineas pl
         ON p.Serie = pl.CodigoSerie
        AND p.Numero = pl.CodigoNumero
-      WHERE p.Fecha = CURDATE()${additionalWhere.replace(/h\./g, 'p.').replace(/hl\./g, 'pl.')}
+      WHERE p.Fecha = CURDATE()${additionalWhere
+        .replace(/h\./g, "p.")
+        .replace(/hl\./g, "pl.")}
 
       ORDER BY FechaInicio DESC, HoraInicio DESC
     `;
 
     // Duplicar params para la segunda parte del UNION
     const allParams = [...params, ...params];
-    
+
     const [rows] = await pool.execute(sql, allParams);
-    
+
     // Calcular estadísticas en el backend
     const stats = {
       total: rows.length,
       porOperador: {},
       porTarea: {},
       porPedido: {},
-      abiertas: rows.filter(r => r.Abierta === 1).length
+      abiertas: rows.filter((r) => r.Abierta === 1).length,
     };
 
     // Agrupar por operador
-    rows.forEach(row => {
-      const op = row.OperarioNombre || 'Sin operario';
-      const tar = row.CodigoTarea || 'Sin tarea';
-      const ped = row.NumeroManual || 'Sin pedido';
+    rows.forEach((row) => {
+      const op = row.OperarioNombre || "Sin operario";
+      const tar = row.CodigoTarea || "Sin tarea";
+      const ped = row.NumeroManual || "Sin pedido";
 
       stats.porOperador[op] = (stats.porOperador[op] || 0) + 1;
       stats.porTarea[tar] = (stats.porTarea[tar] || 0) + 1;
@@ -547,37 +529,37 @@ router.get('/tiempo-real-nueva2', async (req, res) => {
 
     res.status(200).json({
       data: rows,
-      stats: stats
+      stats: stats,
     });
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/tiempo-real-nueva:', error);
-    res.status(500).json({ status: 'error', message: error.message });
+    console.error("❌ ERROR EN /control-terminales/tiempo-real-nueva:", error);
+    res.status(500).json({ status: "error", message: error.message });
   }
 });
 
-router.get('/tiempo-real-nueva', async (req, res) => {
-  console.log('PETICION para tiempo-real-nueva TERMINALES');
-  
+router.get("/tiempo-real-nueva", async (req, res) => {
+  console.log("PETICION para tiempo-real-nueva TERMINALES");
+
   try {
     const { operador, tarea, pedido, fecha } = req.query; // ← AGREGAR fecha
 
     // 🧪 Determinar qué fecha usar
-    const fechaQuery = fecha ? `'${fecha}'` : 'CURDATE()';
-    
+    const fechaQuery = fecha ? `'${fecha}'` : "CURDATE()";
+
     // Construir condiciones WHERE adicionales
-    let additionalWhere = '';
+    let additionalWhere = "";
     let params = [];
 
     if (operador) {
-      additionalWhere += ' AND h.OperarioNombre LIKE ?';
+      additionalWhere += " AND h.OperarioNombre LIKE ?";
       params.push(`%${operador}%`);
     }
     if (tarea) {
-      additionalWhere += ' AND hl.CodigoTarea = ?';
+      additionalWhere += " AND hl.CodigoTarea = ?";
       params.push(tarea);
     }
     if (pedido) {
-      additionalWhere += ' AND hl.NumeroManual LIKE ?';
+      additionalWhere += " AND hl.NumeroManual LIKE ?";
       params.push(`%${pedido}%`);
     }
 
@@ -606,33 +588,35 @@ router.get('/tiempo-real-nueva', async (req, res) => {
       INNER JOIN parteslineas pl
         ON p.Serie = pl.CodigoSerie
        AND p.Numero = pl.CodigoNumero
-      WHERE p.Fecha = ${fechaQuery}${additionalWhere.replace(/h\./g, 'p.').replace(/hl\./g, 'pl.')}
+      WHERE p.Fecha = ${fechaQuery}${additionalWhere
+      .replace(/h\./g, "p.")
+      .replace(/hl\./g, "pl.")}
 
       ORDER BY FechaInicio DESC, HoraInicio DESC
     `;
 
     // Duplicar params para la segunda parte del UNION
     const allParams = [...params, ...params];
-    
+
     const [rows] = await pool.execute(sql, allParams);
-    
+
     // Calcular estadísticas en el backend
     const stats = {
       total: rows.length,
       porOperador: {},
       porTarea: {},
       porPedido: {},
-      abiertas: rows.filter(r => r.Abierta === 1).length,
-      operadoresUnicos: new Set(rows.map(r => r.OperarioNombre)).size,
-      tareasUnicas: new Set(rows.map(r => r.CodigoTarea)).size,
-      pedidosUnicos: new Set(rows.map(r => r.NumeroManual)).size
+      abiertas: rows.filter((r) => r.Abierta === 1).length,
+      operadoresUnicos: new Set(rows.map((r) => r.OperarioNombre)).size,
+      tareasUnicas: new Set(rows.map((r) => r.CodigoTarea)).size,
+      pedidosUnicos: new Set(rows.map((r) => r.NumeroManual)).size,
     };
 
     // Agrupar por operador
-    rows.forEach(row => {
-      const op = row.OperarioNombre || 'Sin operario';
-      const tar = row.CodigoTarea || 'Sin tarea';
-      const ped = row.NumeroManual || 'Sin pedido';
+    rows.forEach((row) => {
+      const op = row.OperarioNombre || "Sin operario";
+      const tar = row.CodigoTarea || "Sin tarea";
+      const ped = row.NumeroManual || "Sin pedido";
 
       stats.porOperador[op] = (stats.porOperador[op] || 0) + 1;
       stats.porTarea[tar] = (stats.porTarea[tar] || 0) + 1;
@@ -641,11 +625,11 @@ router.get('/tiempo-real-nueva', async (req, res) => {
 
     res.status(200).json({
       data: rows,
-      stats: stats
+      stats: stats,
     });
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/tiempo-real-nueva:', error);
-    res.status(500).json({ status: 'error', message: error.message });
+    console.error("❌ ERROR EN /control-terminales/tiempo-real-nueva:", error);
+    res.status(500).json({ status: "error", message: error.message });
   }
 });
 
@@ -653,11 +637,11 @@ router.get('/tiempo-real-nueva', async (req, res) => {
  * ============================================================================
  * OPTIMIZACIÓN #5: /production-analytics - SEVERIDAD ALTA
  * ============================================================================
- * 
+ *
  * ANTES:
  * - UNION sin índices en columnas de fecha
  * - Traía campos innecesarios (Gastos1, Gastos2, Kms1, Kms2)
- * 
+ *
  * DESPUÉS:
  * - Solo SELECT de columnas necesarias
  * - Limitar histórico (últimos 90 días)
@@ -666,13 +650,13 @@ router.get('/tiempo-real-nueva', async (req, res) => {
  * otros cambios mas pequeños
  * ============================================================================
  */
-router.get('/production-analytics', async (req, res) => {
+router.get("/production-analytics", async (req, res) => {
   const { start, end, limit = 1000, offset = 0 } = req.query;
-  
+
   if (!start || !end) {
-    return res.status(400).json({ 
-      status: 'error', 
-      message: 'Faltan parámetros start y end' 
+    return res.status(400).json({
+      status: "error",
+      message: "Faltan parámetros start y end",
     });
   }
 
@@ -721,21 +705,28 @@ router.get('/production-analytics', async (req, res) => {
     `;
 
     const [rows] = await pool.execute(sql, [
-      start, end, start, end, 
-      parseInt(limit), parseInt(offset)
+      start,
+      end,
+      start,
+      end,
+      parseInt(limit),
+      parseInt(offset),
     ]);
-    
+
     res.status(200).json({
       data: rows,
       pagination: {
         limit: parseInt(limit),
         offset: parseInt(offset),
-        count: rows.length
-      }
+        count: rows.length,
+      },
     });
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/production-analytics:', error);
-    res.status(500).json({ status: 'error', message: error.message });
+    console.error(
+      "❌ ERROR EN /control-terminales/production-analytics:",
+      error
+    );
+    res.status(500).json({ status: "error", message: error.message });
   }
 });
 
@@ -819,19 +810,19 @@ router.get("/tiempos-acumulados", async (req, res) => {
   }
 });
 
-router.get('/tiempo-real', async (req, res) => {
-  console.log('PETICION para tiempo-real TERMINALES');
+router.get("/tiempo-real", async (req, res) => {
+  console.log("PETICION para tiempo-real TERMINALES");
   try {
     const sql = `SELECT * FROM vpartestodo WHERE Fecha = CURDATE() ORDER BY FechaInicio, HoraInicio;`;
     const [rows] = await pool.execute(sql);
     res.status(200).json(rows);
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/tiempo-real:', error);
-    res.status(500).json({ status: 'error', message: error.message });
+    console.error("❌ ERROR EN /control-terminales/tiempo-real:", error);
+    res.status(500).json({ status: "error", message: error.message });
   }
 });
 
-router.get('/production-analytics-sin-fechas', async (req, res) => {
+router.get("/production-analytics-sin-fechas", async (req, res) => {
   try {
     const sql = `
       SELECT
@@ -872,8 +863,11 @@ router.get('/production-analytics-sin-fechas', async (req, res) => {
     const [rows] = await pool.execute(sql);
     res.status(200).json(rows);
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/production-analytics-sin-fechas:', error);
-    res.status(500).json({ status: 'error', message: error.message });
+    console.error(
+      "❌ ERROR EN /control-terminales/production-analytics-sin-fechas:",
+      error
+    );
+    res.status(500).json({ status: "error", message: error.message });
   }
 });
 
@@ -881,18 +875,18 @@ router.get('/production-analytics-sin-fechas', async (req, res) => {
  * ============================================================================
  * OPTIMIZACIÓN #6: /pedidos-en-fabrica - SEVERIDAD MEDIA
  * ============================================================================
- * 
+ *
  * ANTES:
  * - Traía TODOS los pedidos en fábrica sin límite (potencialmente miles)
  * - Sin paginación ni filtros
  * - Sin límite temporal
- * 
+ *
  * DESPUÉS:
  * - Paginación con limit/offset
  * - Filtros por cliente, búsqueda en NumeroManual/Descripción
  * - Límite temporal de 180 días (configurable)
  * - Reducción: ~1000 → 100 registros (90% menos)
- * 
+ *
  * Query params:
  * - search: string (búsqueda en NumeroManual, Descripcion, Cliente)
  * - cliente: string (filtro por cliente específico)
@@ -901,40 +895,42 @@ router.get('/production-analytics-sin-fechas', async (req, res) => {
  * - days: number (default 180, máximo histórico en días)
  * ============================================================================
  */
-router.get('/pedidos-en-fabrica', async (req, res) => {
+router.get("/pedidos-en-fabrica", async (req, res) => {
   try {
-    const { 
-      search = '', 
-      cliente = '', 
-      limit = 100, 
+    const {
+      search = "",
+      cliente = "",
+      limit = 100,
       offset = 0,
-      days = 180 
+      days = 180,
     } = req.query;
 
     // Construir condiciones WHERE dinámicamente
     let whereConditions = [
-      'll.FabricacionNumeroManual IS NOT NULL',
-      'll.FabricacionNumeroManual != \'\'',
-      `l.FechaRealInicio >= DATE_SUB(CURDATE(), INTERVAL ${parseInt(days)} DAY)`
+      "ll.FabricacionNumeroManual IS NOT NULL",
+      "ll.FabricacionNumeroManual != ''",
+      `l.FechaRealInicio >= DATE_SUB(CURDATE(), INTERVAL ${parseInt(
+        days
+      )} DAY)`,
     ];
     let params = [];
 
     // Filtro por búsqueda
-    if (search && search.trim() !== '') {
+    if (search && search.trim() !== "") {
       const searchTerm = `%${search.trim()}%`;
       whereConditions.push(
-        '(l.NumeroManual LIKE ? OR l.Descripcion LIKE ? OR ll.Cliente LIKE ?)'
+        "(l.NumeroManual LIKE ? OR l.Descripcion LIKE ? OR ll.Cliente LIKE ?)"
       );
       params.push(searchTerm, searchTerm, searchTerm);
     }
 
     // Filtro por cliente
-    if (cliente && cliente.trim() !== '') {
-      whereConditions.push('ll.Cliente LIKE ?');
+    if (cliente && cliente.trim() !== "") {
+      whereConditions.push("ll.Cliente LIKE ?");
       params.push(`%${cliente.trim()}%`);
     }
 
-    const whereClause = whereConditions.join(' AND ');
+    const whereClause = whereConditions.join(" AND ");
 
     const sql = `
       SELECT
@@ -971,12 +967,12 @@ router.get('/pedidos-en-fabrica', async (req, res) => {
         total: countResult[0].total,
         limit: parseInt(limit),
         offset: parseInt(offset),
-        hasMore: (parseInt(offset) + parseInt(limit)) < countResult[0].total
-      }
+        hasMore: parseInt(offset) + parseInt(limit) < countResult[0].total,
+      },
     });
   } catch (error) {
-    console.error('❌ ERROR EN /pedidos-en-fabrica:', error);
-    res.status(500).json({ status: 'error', message: error.message });
+    console.error("❌ ERROR EN /pedidos-en-fabrica:", error);
+    res.status(500).json({ status: "error", message: error.message });
   }
 });
 
@@ -1028,20 +1024,27 @@ router.get("/lotesfabricaciones/columns", async (req, res) => {
   }
 });
 
-router.get('/reporte', async (req, res) => {
+router.get("/reporte", async (req, res) => {
   const { num_manual } = req.query;
   if (!num_manual) {
-    return res.status(400).json({ status: 'error', message: 'Falta num_manual' });
+    return res
+      .status(400)
+      .json({ status: "error", message: "Falta num_manual" });
   }
 
   try {
     const [loteRows] = await pool.execute(
-      'SELECT Codigo FROM lotes WHERE NumeroManual = ? LIMIT 1',
+      "SELECT Codigo FROM lotes WHERE NumeroManual = ? LIMIT 1",
       [num_manual]
     );
 
     if (loteRows.length === 0) {
-      return res.status(404).json({ status: 'error', message: 'Lote no encontrado para el NumeroManual proporcionado' });
+      return res
+        .status(404)
+        .json({
+          status: "error",
+          message: "Lote no encontrado para el NumeroManual proporcionado",
+        });
     }
 
     const codigoLote = loteRows[0].Codigo;
@@ -1088,7 +1091,7 @@ router.get('/reporte', async (req, res) => {
     );
 
     return res.status(200).json({
-      status: 'ok',
+      status: "ok",
       num_manual,
       codigoLote,
       reporte: {
@@ -1100,8 +1103,8 @@ router.get('/reporte', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/reporte:', error);
-    return res.status(500).json({ status: 'error', message: error.message });
+    console.error("❌ ERROR EN /control-terminales/reporte:", error);
+    return res.status(500).json({ status: "error", message: error.message });
   }
 });
 
@@ -1109,12 +1112,12 @@ router.get('/reporte', async (req, res) => {
  * ============================================================================
  * OPTIMIZACIÓN #7: /tiempos-operario-lote - SEVERIDAD MEDIA
  * ============================================================================
- * 
+ *
  * ANTES:
  * - Usaba vista vpartestodo (TABLE SCAN en hpartes: 1803 filas)
  * - Subquery en WHERE (SELECT Codigo FROM lotes...)
  * - Tiempo: ~415ms
- * 
+ *
  * DESPUÉS:
  * - Query directa con UNION ALL
  * - Filtrado por NumeroManual en índices
@@ -1122,10 +1125,12 @@ router.get('/reporte', async (req, res) => {
  * - Tiempo esperado: <100ms (75% más rápido)
  * ============================================================================
  */
-router.get('/tiempos-operario-lote', async (req, res) => {
+router.get("/tiempos-operario-lote", async (req, res) => {
   const { num_manual } = req.query;
   if (!num_manual) {
-    return res.status(400).json({ status: 'error', message: 'Falta num_manual' });
+    return res
+      .status(400)
+      .json({ status: "error", message: "Falta num_manual" });
   }
 
   const sql = `
@@ -1168,12 +1173,15 @@ router.get('/tiempos-operario-lote', async (req, res) => {
     const [rows] = await pool.execute(sql, [num_manual, num_manual]);
     res.status(200).json(rows);
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/tiempos-por-operario:', error);
-    res.status(500).json({ status: 'error', message: error.message });
+    console.error(
+      "❌ ERROR EN /control-terminales/tiempos-por-operario:",
+      error
+    );
+    res.status(500).json({ status: "error", message: error.message });
   }
 });
 
-router.get('/historico-operarios-lotes-actuales', async (req, res) => {
+router.get("/historico-operarios-lotes-actuales", async (req, res) => {
   const sql = `
     SELECT
       v.OperarioNombre,
@@ -1192,8 +1200,11 @@ router.get('/historico-operarios-lotes-actuales', async (req, res) => {
     const [rows] = await pool.execute(sql);
     res.status(200).json(rows);
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/operarios-por-lotes-actuales:', error);
-    res.status(500).json({ status: 'error', message: error.message });
+    console.error(
+      "❌ ERROR EN /control-terminales/operarios-por-lotes-actuales:",
+      error
+    );
+    res.status(500).json({ status: "error", message: error.message });
   }
 });
 
@@ -1201,24 +1212,24 @@ router.get('/historico-operarios-lotes-actuales', async (req, res) => {
  * ============================================================================
  * OPTIMIZACIÓN #8: /promedios-tareas-operarios - SEVERIDAD MEDIA
  * ============================================================================
- * 
+ *
  * FUNCIÓN:
  * - Calcula promedios de tiempo por tarea y operario
  * - Rango de fecha: último mes (30 días) por defecto
  * - Incluye estadísticas detalladas y agregaciones
- * 
+ *
  * CARACTERÍSTICAS:
  * - Filtrado eficiente en SQL con índices de fecha
  * - Agrupación por CodigoTarea y OperarioNombre
  * - Calcula promedio, total, mínimo, máximo y cantidad de registros
  * - Formato tiempo en HH:MM:SS
- * 
+ *
  * Query params:
  * - days: number (default 30, días hacia atrás desde hoy)
  * - minRegistros: number (default 1, mínimo de registros para incluir en resultado)
  * ============================================================================
  */
-router.get('/promedios-tareas-operarios', async (req, res) => {
+router.get("/promedios-tareas-operarios", async (req, res) => {
   try {
     const { days = 30, minRegistros = 1 } = req.query;
 
@@ -1282,34 +1293,40 @@ router.get('/promedios-tareas-operarios', async (req, res) => {
       ORDER BY CodigoTarea, PromedioSegundos DESC
     `;
 
-    const [rows] = await pool.execute(sql, [diasAtras, diasAtras, parseInt(minRegistros)]);
+    const [rows] = await pool.execute(sql, [
+      diasAtras,
+      diasAtras,
+      parseInt(minRegistros),
+    ]);
 
     // Generar resumen estadístico
     const resumen = {
       periodoAnalizado: {
         dias: diasAtras,
-        fechaInicio: new Date(Date.now() - diasAtras * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        fechaFin: new Date().toISOString().split('T')[0]
+        fechaInicio: new Date(Date.now() - diasAtras * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .split("T")[0],
+        fechaFin: new Date().toISOString().split("T")[0],
       },
       totales: {
         registros: rows.reduce((sum, r) => sum + r.TotalRegistros, 0),
-        tareasUnicas: new Set(rows.map(r => r.CodigoTarea)).size,
-        operariosUnicos: new Set(rows.map(r => r.CodigoOperario)).size,
-        pedidosUnicos: new Set(rows.map(r => r.PedidosUnicos)).size
+        tareasUnicas: new Set(rows.map((r) => r.CodigoTarea)).size,
+        operariosUnicos: new Set(rows.map((r) => r.CodigoOperario)).size,
+        pedidosUnicos: new Set(rows.map((r) => r.PedidosUnicos)).size,
       },
       promediosPorTarea: {},
-      promediosPorOperario: {}
+      promediosPorOperario: {},
     };
 
     // Agrupar promedios por tarea
-    rows.forEach(row => {
-      const tarea = row.CodigoTarea || 'SIN_TAREA';
+    rows.forEach((row) => {
+      const tarea = row.CodigoTarea || "SIN_TAREA";
       if (!resumen.promediosPorTarea[tarea]) {
         resumen.promediosPorTarea[tarea] = {
           totalRegistros: 0,
           pedidosUnicos: 0,
           operarios: [],
-          promedioGeneral: 0
+          promedioGeneral: 0,
         };
       }
       resumen.promediosPorTarea[tarea].totalRegistros += row.TotalRegistros;
@@ -1317,52 +1334,59 @@ router.get('/promedios-tareas-operarios', async (req, res) => {
       resumen.promediosPorTarea[tarea].operarios.push({
         nombre: row.OperarioNombre,
         promedio: row.PromedioTiempo,
-        registros: row.TotalRegistros
+        registros: row.TotalRegistros,
       });
     });
 
     // Agrupar promedios por operario
-    rows.forEach(row => {
-      const operario = row.OperarioNombre || 'SIN_OPERARIO';
+    rows.forEach((row) => {
+      const operario = row.OperarioNombre || "SIN_OPERARIO";
       if (!resumen.promediosPorOperario[operario]) {
         resumen.promediosPorOperario[operario] = {
           codigo: row.CodigoOperario,
           totalRegistros: 0,
           diasActivos: row.DiasActivos,
-          tareas: []
+          tareas: [],
         };
       }
-      resumen.promediosPorOperario[operario].totalRegistros += row.TotalRegistros;
+      resumen.promediosPorOperario[operario].totalRegistros +=
+        row.TotalRegistros;
       resumen.promediosPorOperario[operario].tareas.push({
         tarea: row.CodigoTarea,
         promedio: row.PromedioTiempo,
-        registros: row.TotalRegistros
+        registros: row.TotalRegistros,
       });
     });
 
     res.status(200).json({
-      status: 'success',
+      status: "success",
       resumen: resumen,
-      detalles: rows
+      detalles: rows,
     });
   } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/promedios-tareas-operarios:', error);
-    res.status(500).json({ 
-      status: 'error', 
+    console.error(
+      "❌ ERROR EN /control-terminales/promedios-tareas-operarios:",
+      error
+    );
+    res.status(500).json({
+      status: "error",
       message: error.message,
-      detail: 'Error al calcular promedios de tareas y operarios'
+      detail: "Error al calcular promedios de tareas y operarios",
     });
   }
 });
-
-
 
 // POST /n8n_dashboard
 router.post("/n8n_dashboard", async (req, res) => {
   const { pedidos } = req.body ?? {};
 
   if (!Array.isArray(pedidos)) {
-    return res.status(400).json({ status: "error", message: "Body inválido. Se espera { pedidos: [...] }" });
+    return res
+      .status(400)
+      .json({
+        status: "error",
+        message: "Body inválido. Se espera { pedidos: [...] }",
+      });
   }
 
   const conn = await pool.getConnection();
@@ -1372,14 +1396,19 @@ router.post("/n8n_dashboard", async (req, res) => {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return null;
     const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(
+      d.getUTCDate()
+    )} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(
+      d.getUTCSeconds()
+    )}`;
   };
 
-  const toMysqlDate = (s) => (typeof s === "string" && s.length >= 10 ? s.slice(0, 10) : null);
+  const toMysqlDate = (s) =>
+    typeof s === "string" && s.length >= 10 ? s.slice(0, 10) : null;
 
-// GET /dashboard_aluminio
-router.get('/dashboard_aluminio', async (_req, res) => {
-  const sql = `
+  // GET /dashboard_aluminio
+  router.get("/dashboard_aluminio", async (_req, res) => {
+    const sql = `
     SELECT
       x.*,
       cl.Cliente,
@@ -1471,19 +1500,21 @@ router.get('/dashboard_aluminio', async (_req, res) => {
     ORDER BY x.FechaInicio DESC, x.HoraInicio DESC;
   `;
 
-  try {
-    const [rows] = await pool.query(sql);
-    res.status(200).json(rows);
-  } catch (error) {
-    console.error('❌ ERROR EN /control-terminales/dashboard_aluminio:', error);
-    res.status(500).json({
-      status: 'error',
-      message: 'Error al obtener dashboard de aluminio',
-      detail: error.message,
-    });
-  }
-});
-
+    try {
+      const [rows] = await pool.query(sql);
+      res.status(200).json(rows);
+    } catch (error) {
+      console.error(
+        "❌ ERROR EN /control-terminales/dashboard_aluminio:",
+        error
+      );
+      res.status(500).json({
+        status: "error",
+        message: "Error al obtener dashboard de aluminio",
+        detail: error.message,
+      });
+    }
+  });
 
   try {
     await conn.beginTransaction();
@@ -1578,14 +1609,5 @@ router.get('/dashboard_aluminio', async (_req, res) => {
     conn.release();
   }
 });
-
-
-
-
-
-
-
-
-
 
 module.exports = router;
