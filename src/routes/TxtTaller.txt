@@ -16,3 +16,127 @@ Guía GUIAPVC_SINGUIA Long. 1220 mm. Guias exteriores.
  Apertura oscilo batiente interior derecha
  manilla interior mod TOULON
  
+
+
+
+ // POST /n8n_dashboard
+router.post("/n8n_dashboard", async (req, res) => {
+  const { pedidos } = req.body ?? {};
+
+  if (!Array.isArray(pedidos)) {
+    return res.status(400).json({
+      status: "error",
+      message: "Body inválido. Se espera { pedidos: [...] }",
+    });
+  }
+
+  const conn = await pool.getConnection();
+
+  const isoToMysqlDateTime = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(
+      d.getUTCDate()
+    )} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(
+      d.getUTCSeconds()
+    )}`;
+  };
+
+  const toMysqlDate = (s) =>
+    typeof s === "string" && s.length >= 10 ? s.slice(0, 10) : null;
+
+  try {
+    await conn.beginTransaction();
+
+    // 1) RESET (borrar todo lo anterior)
+    await conn.execute("DELETE FROM terminales.n8n_pedidos_detalles");
+    await conn.execute("DELETE FROM terminales.n8n_pedidos");
+
+    // 2) Insert cabeceras y guardar IdPedido por NoPedido
+    const idByNoPedido = new Map();
+
+    for (const p of pedidos) {
+      const NoPedido = (p?.NoPedido ?? "").toString().trim();
+      if (!NoPedido) continue;
+
+      const [r] = await conn.execute(
+        `
+        INSERT INTO terminales.n8n_pedidos
+          (NoPedido, FechaEnvio, Seccion, Cliente, Comercial, EmailComercial, RefCliente, Compromiso, EstadoPedido)
+        VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          NoPedido,
+          toMysqlDate(p.FechaEnvio),
+          p.Seccion ?? null,
+          p.Cliente ?? null,
+          p.Comercial ?? null,
+          p.EmailComercial ?? null,
+          p.RefCliente ?? null,
+          isoToMysqlDateTime(p.Compromiso),
+          p.EstadoPedido ?? null,
+        ]
+      );
+
+      idByNoPedido.set(NoPedido, r.insertId);
+    }
+
+    // 3) Insert detalles (bulk por lotes)
+    const rows = [];
+    for (const p of pedidos) {
+      const NoPedido = (p?.NoPedido ?? "").toString().trim();
+      if (!NoPedido) continue;
+
+      const IdPedido = idByNoPedido.get(NoPedido);
+      if (!IdPedido) continue;
+
+      const detalles = Array.isArray(p.detalles) ? p.detalles : [];
+      for (const d of detalles) {
+        if (d?.Id_ControlMat == null) continue;
+
+        rows.push([
+          IdPedido,
+          Number(d.Id_ControlMat),
+          d.Material ?? "",
+          d.Proveedor ?? "",
+          isoToMysqlDateTime(d.FechaPrevista),
+          d.Recibido ?? -1,
+        ]);
+      }
+    }
+
+    if (rows.length) {
+      const CHUNK = 800; // seguro para paquetes grandes
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const chunk = rows.slice(i, i + CHUNK);
+        const placeholders = chunk.map(() => "(?,?,?,?,?,?)").join(",");
+        const flat = chunk.flat();
+
+        await conn.execute(
+          `
+          INSERT INTO terminales.n8n_pedidos_detalles
+            (IdPedido, Id_ControlMat, Material, Proveedor, FechaPrevista, Recibido)
+          VALUES ${placeholders}
+          `,
+          flat
+        );
+      }
+    }
+
+    await conn.commit();
+    res.json({
+      status: "ok",
+      pedidosInsertados: idByNoPedido.size,
+      detallesInsertados: rows.length,
+    });
+  } catch (error) {
+    await conn.rollback();
+    console.error("❌ ERROR EN /n8n_dashboard:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  } finally {
+    conn.release();
+  }
+});

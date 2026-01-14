@@ -1494,6 +1494,7 @@ router.get("/promedios-tareas-operarios", async (req, res) => {
 });
 
 // POST /n8n_dashboard
+// POST /n8n_dashboard
 router.post("/n8n_dashboard", async (req, res) => {
   const { pedidos } = req.body ?? {};
 
@@ -1558,8 +1559,10 @@ router.post("/n8n_dashboard", async (req, res) => {
       idByNoPedido.set(NoPedido, r.insertId);
     }
 
-    // 3) Insert detalles (bulk por lotes)
+    // 3) Insert detalles (bulk por lotes) con DEDUPE por (IdPedido, Id_ControlMat)
     const rows = [];
+    const seen = new Set(); // clave compuesta para evitar duplicados en el payload
+
     for (const p of pedidos) {
       const NoPedido = (p?.NoPedido ?? "").toString().trim();
       if (!NoPedido) continue;
@@ -1568,12 +1571,20 @@ router.post("/n8n_dashboard", async (req, res) => {
       if (!IdPedido) continue;
 
       const detalles = Array.isArray(p.detalles) ? p.detalles : [];
+
       for (const d of detalles) {
         if (d?.Id_ControlMat == null) continue;
 
+        const Id_ControlMat = Number(d.Id_ControlMat);
+        if (Number.isNaN(Id_ControlMat)) continue;
+
+        const key = `${IdPedido}-${Id_ControlMat}`;
+        if (seen.has(key)) continue; // <-- evita duplicados en el mismo batch
+        seen.add(key);
+
         rows.push([
           IdPedido,
-          Number(d.Id_ControlMat),
+          Id_ControlMat,
           d.Material ?? "",
           d.Proveedor ?? "",
           isoToMysqlDateTime(d.FechaPrevista),
@@ -1594,6 +1605,11 @@ router.post("/n8n_dashboard", async (req, res) => {
           INSERT INTO terminales.n8n_pedidos_detalles
             (IdPedido, Id_ControlMat, Material, Proveedor, FechaPrevista, Recibido)
           VALUES ${placeholders}
+          ON DUPLICATE KEY UPDATE
+            Material = VALUES(Material),
+            Proveedor = VALUES(Proveedor),
+            FechaPrevista = VALUES(FechaPrevista),
+            Recibido = VALUES(Recibido)
           `,
           flat
         );
@@ -1601,10 +1617,13 @@ router.post("/n8n_dashboard", async (req, res) => {
     }
 
     await conn.commit();
+
     res.json({
       status: "ok",
       pedidosInsertados: idByNoPedido.size,
       detallesInsertados: rows.length,
+      // si quieres, puedes exponer cuántos duplicados se filtraron:
+      // duplicadosFiltrados: (totalDetallesOriginales - rows.length),
     });
   } catch (error) {
     await conn.rollback();
@@ -1614,6 +1633,7 @@ router.post("/n8n_dashboard", async (req, res) => {
     conn.release();
   }
 });
+
 
 router.get("/alerta", async (req, res) => {
   const sql = `SELECT
