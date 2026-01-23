@@ -1,5 +1,6 @@
 const express = require("express");
 const pool = require("../config/databaseAlamcen");
+const poolTerminales = require("../config/databaseTerminales");
 
 const router = express.Router();
 
@@ -482,193 +483,239 @@ LIMIT 0, 1000`;
 });
 
 router.get("/alerta2", async (req, res) => {
-    const sql = `SELECT
-  pr.NoPedido,
-  pr.FechaEnvio,
-  pr.Compromiso,
-  pr.PedidoKey,
-  pr.Cliente,
-  pr.Comercial,
-  pr.RefCliente,
-  
-  -- Antigüedad del pedido
-  DATEDIFF(CURDATE(), pr.FechaEnvio) AS DiasDesdeEnvio,
-  DATEDIFF(pr.Compromiso, CURDATE()) AS DiasHastaCompromiso,
-
-  CASE WHEN fb.PedidoKey IS NULL THEN 0 ELSE 1 END AS SeHaFabricado,
-  COALESCE(fb.TotalModulos, 0) AS TotalModulos,
-  COALESCE(fb.ModulosRestantes, 0) AS ModulosRestantes,
-  fb.UltimaFabricacion,
-  fb.UltimoInicio,
-  
-  -- Estado mejorado con más criterios
-  CASE
-    -- 🔴 CRÍTICO: Nunca fabricado + compromiso vencido/próximo
-    WHEN fb.PedidoKey IS NULL AND DATEDIFF(pr.Compromiso, CURDATE()) <= 0
-      THEN '🔴 CRÍTICO: NO fabricado + compromiso VENCIDO'
-    
-    WHEN fb.PedidoKey IS NULL AND DATEDIFF(pr.Compromiso, CURDATE()) BETWEEN 1 AND 3
-      THEN '🔴 URGENTE: NO fabricado + compromiso en 1-3 días'
-    
-    WHEN fb.PedidoKey IS NULL AND DATEDIFF(pr.Compromiso, CURDATE()) BETWEEN 4 AND 7
-      THEN '🟠 ALERTA: NO fabricado + compromiso en 4-7 días'
-    
-    WHEN fb.PedidoKey IS NULL
-      THEN '🟡 PENDIENTE: NO fabricado + compromiso lejano'
-    
-    -- Fabricado pero evaluando progreso
-    WHEN COALESCE(fb.ModulosRestantes, 0) = 0
-      THEN '✅ COMPLETADO: Todos los módulos fabricados'
-    
-    WHEN DATEDIFF(pr.Compromiso, CURDATE()) <= 0 AND COALESCE(fb.ModulosRestantes, 0) > 0
-      THEN '🔴 CRÍTICO: Compromiso vencido + módulos pendientes'
-    
-    WHEN DATEDIFF(pr.Compromiso, CURDATE()) BETWEEN 1 AND 3 AND COALESCE(fb.ModulosRestantes, 0) >= 5
-      THEN '🟠 URGENTE: Compromiso próximo + muchos módulos'
-    
-    WHEN DATEDIFF(pr.Compromiso, CURDATE()) BETWEEN 1 AND 3
-      THEN '🟡 MONITOREAR: Compromiso próximo + pocos módulos'
-    
-    WHEN COALESCE(fb.ModulosRestantes, 0) >= 10
-      THEN '🟡 PRIORIDAD: Muchos módulos pendientes'
-    
-    WHEN DATEDIFF(pr.Compromiso, CURDATE()) >= 14
-      THEN '🔵 NORMAL: En fabricación + compromiso lejano'
-    
-    ELSE '🟢 EN CURSO: Progreso adecuado'
-  END AS Estado
-
-FROM
-(
-  SELECT
-    p.NoPedido,
-    p.FechaEnvio,
-    p.Compromiso,
-    p.Cliente,
-    p.Comercial,
-    p.RefCliente,
-    CONCAT(
-      SUBSTRING_INDEX(p.NoPedido, '-', 1), '_',
-      SUBSTRING_INDEX(SUBSTRING_INDEX(p.NoPedido, '-', 2), '-', -1), '_',
-      CAST(SUBSTRING_INDEX(p.NoPedido, '-', -1) AS UNSIGNED)
-    ) AS PedidoKey
-  FROM almacen.n8n_pedidos p
-  WHERE p.Seccion = 'ALUMINIO'
-) pr
-
-LEFT JOIN
-(
-  SELECT
-    fx.PedidoKey,
-    MAX(lx.TotalUnidades) AS TotalModulos,
-    GREATEST(MAX(lx.TotalUnidades) - COALESCE(px.ModulosProcesados, 0), 0) AS ModulosRestantes,
-    MAX(fx.FechaInicio) AS UltimaFabricacion,
-    MAX(CONCAT(fx.FechaInicio, ' ', fx.HoraInicio)) AS UltimoInicio
-  FROM
-  (
-    -- 🔥 CAMBIO: Búsqueda HISTÓRICA (sin filtro de CURDATE())
-    SELECT
-      CONCAT(
-        SUBSTRING_INDEX(hl.NumeroManual, '_', 1), '_',
-        SUBSTRING_INDEX(SUBSTRING_INDEX(hl.NumeroManual, '_', 2), '_', -1), '_',
-        CAST(SUBSTRING_INDEX(hl.NumeroManual, '_', -1) AS UNSIGNED)
-      ) AS PedidoKey,
-      hl.NumeroManual,
-      hl.FechaInicio,
-      hl.HoraInicio
-    FROM hpartes h
-    INNER JOIN hparteslineas hl
-      ON h.Serie = hl.CodigoSerie
-     AND h.Numero = hl.CodigoNumero
-    WHERE hl.NumeroManual IS NOT NULL AND hl.NumeroManual <> ''
-      AND hl.FechaInicio IS NOT NULL
-      AND hl.FechaInicio <> '0000-00-00'
-      AND hl.FechaInicio <> '1970-01-01'
-
-    UNION ALL
-
-    SELECT
-      CONCAT(
-        SUBSTRING_INDEX(pl.NumeroManual, '_', 1), '_',
-        SUBSTRING_INDEX(SUBSTRING_INDEX(pl.NumeroManual, '_', 2), '_', -1), '_',
-        CAST(SUBSTRING_INDEX(pl.NumeroManual, '_', -1) AS UNSIGNED)
-      ) AS PedidoKey,
-      pl.NumeroManual,
-      pl.FechaInicio,
-      pl.HoraInicio
-    FROM partes p
-    INNER JOIN parteslineas pl
-      ON p.Serie = pl.CodigoSerie
-     AND p.Numero = pl.CodigoNumero
-    WHERE pl.NumeroManual IS NOT NULL AND pl.NumeroManual <> ''
-      AND pl.FechaInicio IS NOT NULL
-      AND pl.FechaInicio <> '0000-00-00'
-      AND pl.FechaInicio <> '1970-01-01'
-  ) fx
-
-  LEFT JOIN (
-    SELECT NumeroManual, MAX(TotalUnidades) AS TotalUnidades
-    FROM Lotes
-    GROUP BY NumeroManual
-  ) lx
-    ON lx.NumeroManual = fx.NumeroManual
-
-  LEFT JOIN (
-    SELECT
-      CONCAT(
-        SUBSTRING_INDEX(s.NumeroManual, '_', 1), '_',
-        SUBSTRING_INDEX(SUBSTRING_INDEX(s.NumeroManual, '_', 2), '_', -1), '_',
-        CAST(SUBSTRING_INDEX(s.NumeroManual, '_', -1) AS UNSIGNED)
-      ) AS PedidoKey,
-      COUNT(DISTINCT s.Modulo) AS ModulosProcesados
-    FROM (
-      SELECT NumeroManual, Modulo, FechaInicio
-      FROM hparteslineas
-      WHERE NumeroManual IS NOT NULL AND NumeroManual <> ''
-        AND Modulo IS NOT NULL AND Modulo <> ''
-        AND FechaInicio IS NOT NULL
-        AND FechaInicio <> '0000-00-00'
-        AND FechaInicio <> '1970-01-01'
-
-      UNION ALL
-
-      SELECT NumeroManual, Modulo, FechaInicio
-      FROM parteslineas
-      WHERE NumeroManual IS NOT NULL AND NumeroManual <> ''
-        AND Modulo IS NOT NULL AND Modulo <> ''
-        AND FechaInicio IS NOT NULL
-        AND FechaInicio <> '0000-00-00'
-        AND FechaInicio <> '1970-01-01'
-    ) s
-    GROUP BY
-      CONCAT(
-        SUBSTRING_INDEX(s.NumeroManual, '_', 1), '_',
-        SUBSTRING_INDEX(SUBSTRING_INDEX(s.NumeroManual, '_', 2), '_', -1), '_',
-        CAST(SUBSTRING_INDEX(s.NumeroManual, '_', -1) AS UNSIGNED)
-      )
-  ) px
-    ON px.PedidoKey = fx.PedidoKey
-
-  GROUP BY fx.PedidoKey
-) fb
-  ON fb.PedidoKey = pr.PedidoKey
-
--- Ordenar por criticidad: compromiso más cercano primero, luego por módulos pendientes
-ORDER BY
-  CASE
-    WHEN fb.PedidoKey IS NULL THEN 0  -- Sin fabricar primero
-    ELSE 1
-  END,
-  DATEDIFF(pr.Compromiso, CURDATE()) ASC,  -- Compromiso más urgente
-  COALESCE(fb.ModulosRestantes, 999) DESC,  -- Más módulos pendientes
-  pr.FechaEnvio ASC  -- Más antiguos primero
-LIMIT 0, 1000`;
-
     try {
-        const [rows] = await pool.query(sql);
-        res.json(rows);
+        // 1. Obtener PEDIDOS desde ALMACÉN (n8n)
+        // Recuperamos los campos base
+        const sqlPedidos = `
+            SELECT
+                p.NoPedido,
+                p.FechaEnvio,
+                p.Compromiso,
+                p.Cliente,
+                p.Comercial,
+                p.RefCliente,
+                -- Generamos PedidoKey en SQL igual que antes para mantener consistencia
+                CONCAT(
+                    SUBSTRING_INDEX(p.NoPedido, '-', 1), '_',
+                    SUBSTRING_INDEX(SUBSTRING_INDEX(p.NoPedido, '-', 2), '-', -1), '_',
+                    CAST(SUBSTRING_INDEX(p.NoPedido, '-', -1) AS UNSIGNED)
+                ) AS PedidoKey
+            FROM n8n_pedidos p
+            WHERE p.Seccion = 'ALUMINIO'
+        `;
+        const [pedidosRows] = await pool.query(sqlPedidos);
+
+        if (pedidosRows.length === 0) {
+            return res.json([]);
+        }
+
+        // 2. Extraer las Keys para filtrar en Terminales (Optimización)
+        // Generamos un array de PedidoKeys para usar en el WHERE IN
+        const pedidoKeys = pedidosRows
+            .map(p => p.PedidoKey)
+            .filter(k => k); // eliminar nulos
+
+        if (pedidoKeys.length === 0) {
+            return res.json([]);
+        }
+
+        // 3. Consultar DATOS DE FABRICACIÓN en TERMINALES
+        // Hacemos el "machacado" de datos grouping por PedidoKey calculado dinámicamente
+        // Usamos IN (?) para filtrar solo los pedidos que nos interesan
+        const sqlTerminales = `
+            SELECT
+                fx.PedidoKey,
+                MAX(lx.TotalUnidades) AS TotalModulos,
+                GREATEST(MAX(lx.TotalUnidades) - COALESCE(px.ModulosProcesados, 0), 0) AS ModulosRestantes,
+                MAX(fx.FechaInicio) AS UltimaFabricacion,
+                MAX(CONCAT(fx.FechaInicio, ' ', fx.HoraInicio)) AS UltimoInicio
+            FROM
+            (
+                -- Buscamos en hpartes (Histórico)
+                SELECT
+                    CONCAT(
+                        SUBSTRING_INDEX(hl.NumeroManual, '_', 1), '_',
+                        SUBSTRING_INDEX(SUBSTRING_INDEX(hl.NumeroManual, '_', 2), '_', -1), '_',
+                        CAST(SUBSTRING_INDEX(hl.NumeroManual, '_', -1) AS UNSIGNED)
+                    ) AS PedidoKey,
+                    hl.FechaInicio,
+                    hl.HoraInicio,
+                    hl.NumeroManual
+                FROM hpartes h
+                INNER JOIN hparteslineas hl ON h.Serie = hl.CodigoSerie AND h.Numero = hl.CodigoNumero
+                WHERE hl.NumeroManual IS NOT NULL AND hl.NumeroManual <> ''
+                  AND hl.FechaInicio IS NOT NULL AND hl.FechaInicio <> '0000-00-00'
+                  -- Filtro clave: Solo traemos datos de los pedidos N8N
+                  AND CONCAT(
+                        SUBSTRING_INDEX(hl.NumeroManual, '_', 1), '_',
+                        SUBSTRING_INDEX(SUBSTRING_INDEX(hl.NumeroManual, '_', 2), '_', -1), '_',
+                        CAST(SUBSTRING_INDEX(hl.NumeroManual, '_', -1) AS UNSIGNED)
+                    ) IN (${pedidoKeys.map(() => '?').join(',')})
+
+                UNION ALL
+
+                -- Buscamos en partes (Actual)
+                SELECT
+                    CONCAT(
+                        SUBSTRING_INDEX(pl.NumeroManual, '_', 1), '_',
+                        SUBSTRING_INDEX(SUBSTRING_INDEX(pl.NumeroManual, '_', 2), '_', -1), '_',
+                        CAST(SUBSTRING_INDEX(pl.NumeroManual, '_', -1) AS UNSIGNED)
+                    ) AS PedidoKey,
+                    pl.FechaInicio,
+                    pl.HoraInicio,
+                    pl.NumeroManual
+                FROM partes p
+                INNER JOIN parteslineas pl ON p.Serie = pl.CodigoSerie AND p.Numero = pl.CodigoNumero
+                WHERE pl.NumeroManual IS NOT NULL AND pl.NumeroManual <> ''
+                  AND pl.FechaInicio IS NOT NULL AND pl.FechaInicio <> '0000-00-00'
+                  AND CONCAT(
+                        SUBSTRING_INDEX(pl.NumeroManual, '_', 1), '_',
+                        SUBSTRING_INDEX(SUBSTRING_INDEX(pl.NumeroManual, '_', 2), '_', -1), '_',
+                        CAST(SUBSTRING_INDEX(pl.NumeroManual, '_', -1) AS UNSIGNED)
+                    ) IN (${pedidoKeys.map(() => '?').join(',')})
+            ) fx
+
+            LEFT JOIN (
+                SELECT NumeroManual, MAX(TotalUnidades) AS TotalUnidades
+                FROM Lotes
+                GROUP BY NumeroManual
+            ) lx ON lx.NumeroManual = fx.NumeroManual
+
+            LEFT JOIN (
+                SELECT
+                    CONCAT(
+                        SUBSTRING_INDEX(s.NumeroManual, '_', 1), '_',
+                        SUBSTRING_INDEX(SUBSTRING_INDEX(s.NumeroManual, '_', 2), '_', -1), '_',
+                        CAST(SUBSTRING_INDEX(s.NumeroManual, '_', -1) AS UNSIGNED)
+                    ) AS PedidoKey,
+                    COUNT(DISTINCT s.Modulo) AS ModulosProcesados
+                FROM (
+                    SELECT NumeroManual, Modulo 
+                    FROM hparteslineas 
+                    WHERE Modulo IS NOT NULL AND Modulo <> ''
+                    UNION ALL
+                    SELECT NumeroManual, Modulo 
+                    FROM parteslineas 
+                    WHERE Modulo IS NOT NULL AND Modulo <> ''
+                ) s
+                GROUP BY
+                    CONCAT(
+                        SUBSTRING_INDEX(s.NumeroManual, '_', 1), '_',
+                        SUBSTRING_INDEX(SUBSTRING_INDEX(s.NumeroManual, '_', 2), '_', -1), '_',
+                        CAST(SUBSTRING_INDEX(s.NumeroManual, '_', -1) AS UNSIGNED)
+                    )
+            ) px ON px.PedidoKey = fx.PedidoKey
+
+            GROUP BY fx.PedidoKey
+        `;
+
+        // Pasamos los parámetros dos veces (una para hpartes, otra para partes)
+        const params = [...pedidoKeys, ...pedidoKeys];
+        const [terminalesRows] = await poolTerminales.query(sqlTerminales, params);
+
+        // 4. Indexar resultados de Terminales
+        const fabricacionMap = new Map();
+        terminalesRows.forEach(row => {
+            fabricacionMap.set(row.PedidoKey, row);
+        });
+
+        // 5. MERGE + Lógica de negocio (Cálculo de Estados)
+        const resultado = pedidosRows.map(pr => {
+            // Buscamos info de fabricación
+            const fb = fabricacionMap.get(pr.PedidoKey) || {};
+
+            const now = new Date();
+            const fechaCompromiso = pr.Compromiso ? new Date(pr.Compromiso) : null;
+            const fechaEnvio = pr.FechaEnvio ? new Date(pr.FechaEnvio) : null;
+
+            // Cálculos de fecha
+            const diasDesdeEnvio = fechaEnvio
+                ? Math.floor((now - fechaEnvio) / (1000 * 60 * 60 * 24))
+                : null;
+            const diasHastaCompromiso = fechaCompromiso
+                ? Math.ceil((fechaCompromiso - now) / (1000 * 60 * 60 * 24))
+                : null;
+
+            const seHaFabricado = fb.PedidoKey ? 1 : 0;
+            const totalModulos = Number(fb.TotalModulos) || 0;
+            const modulosRestantes = Number(fb.ModulosRestantes) || 0;
+
+            // Determinación de Estado (Lógica replicada del SQL original)
+            let estado = '🟢 EN CURSO: Progreso adecuado';
+
+            if (!seHaFabricado) {
+                // No fabricado
+                if (diasHastaCompromiso !== null && diasHastaCompromiso <= 0) {
+                    estado = '🔴 CRÍTICO: NO fabricado + compromiso VENCIDO';
+                } else if (diasHastaCompromiso !== null && diasHastaCompromiso <= 3) {
+                    estado = '🔴 URGENTE: NO fabricado + compromiso en 1-3 días';
+                } else if (diasHastaCompromiso !== null && diasHastaCompromiso <= 7) {
+                    estado = '🟠 ALERTA: NO fabricado + compromiso en 4-7 días';
+                } else {
+                    estado = '🟡 PENDIENTE: NO fabricado + compromiso lejano';
+                }
+            } else {
+                // Sí fabricado
+                if (modulosRestantes === 0) {
+                    estado = '✅ COMPLETADO: Todos los módulos fabricados';
+                } else if (diasHastaCompromiso !== null && diasHastaCompromiso <= 0 && modulosRestantes > 0) {
+                    estado = '🔴 CRÍTICO: Compromiso vencido + módulos pendientes';
+                } else if (diasHastaCompromiso !== null && diasHastaCompromiso <= 3 && modulosRestantes >= 5) {
+                    estado = '🟠 URGENTE: Compromiso próximo + muchos módulos';
+                } else if (diasHastaCompromiso !== null && diasHastaCompromiso <= 3) {
+                    estado = '🟡 MONITOREAR: Compromiso próximo + pocos módulos';
+                } else if (modulosRestantes >= 10) {
+                    estado = '🟡 PRIORIDAD: Muchos módulos pendientes';
+                } else if (diasHastaCompromiso !== null && diasHastaCompromiso >= 14) {
+                    estado = '🔵 NORMAL: En fabricación + compromiso lejano';
+                }
+            }
+
+            return {
+                NoPedido: pr.NoPedido,
+                FechaEnvio: pr.FechaEnvio,
+                Compromiso: pr.Compromiso,
+                PedidoKey: pr.PedidoKey,
+                Cliente: pr.Cliente,
+                Comercial: pr.Comercial,
+                RefCliente: pr.RefCliente,
+                DiasDesdeEnvio: diasDesdeEnvio,
+                DiasHastaCompromiso: diasHastaCompromiso,
+                SeHaFabricado: seHaFabricado,
+                TotalModulos: totalModulos,
+                ModulosRestantes: modulosRestantes,
+                UltimaFabricacion: fb.UltimaFabricacion || null,
+                UltimoInicio: fb.UltimoInicio || null,
+                Estado: estado
+            };
+        });
+
+        // 6. Ordenamiento final (Sort)
+        resultado.sort((a, b) => {
+            // Crit 1: Sin fabricar primero
+            if (a.SeHaFabricado !== b.SeHaFabricado) return a.SeHaFabricado - b.SeHaFabricado;
+
+            // Crit 2: Compromiso más cercano
+            const diasA = a.DiasHastaCompromiso ?? 9999;
+            const diasB = b.DiasHastaCompromiso ?? 9999;
+            if (diasA !== diasB) return diasA - diasB;
+
+            // Crit 3: Módulos restantes (DESC)
+            const modA = a.ModulosRestantes;
+            const modB = b.ModulosRestantes;
+            if (modA !== modB) return modB - modA;
+
+            // Crit 4: Fecha Envío (ASC)
+            const fA = new Date(a.FechaEnvio || '9999-12-31').getTime();
+            const fB = new Date(b.FechaEnvio || '9999-12-31').getTime();
+            return fA - fB;
+        });
+
+        // Limit
+        res.json(resultado.slice(0, 1000));
+
     } catch (error) {
-        console.error("❌ ERROR EN /control-terminales/alerta2:", error);
+        console.error("❌ ERROR EN /control-n8n/alerta2:", error);
         res.status(500).json({
             status: "error",
             message: "Error al obtener alerta mejorada de pedidos",
