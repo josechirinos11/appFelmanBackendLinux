@@ -13,11 +13,13 @@ const controlPedidoRoutes = require('./routes/controlPedido.routes.js');
 const socketRoutes = require('./sockets/routes/socket.routes');
 const controlAccessRoutes = require('./routes/controlAccess.routes.js');
 const controlTerminalesRoutes = require('./routes/controlTerminalesModificado.router');
-const controlAlmacenRoutes= require('./routes/controlAlmacen.router.js');
-const controlOptimaRoutes= require('./routes/controlOptima.routes.js');
+const controlAlmacenRoutes = require('./routes/controlAlmacen.router.js');
+const controlOptimaRoutes = require('./routes/controlOptima.routes.js');
 
 const controlAfixRoutes = require('./routes/controlAfix.routes.js');
 const controlAfixLegacyRoutes = require('./routes/control-afix.js');
+
+const controlN8NRoutes = require('./routes/controlN8N.routes.js');
 
 const path = require('path');
 const rootPath = path.join(__dirname, '..');
@@ -95,7 +97,7 @@ ${String(sql).trim()}
     const start = Date.now();
     let child;
 
-    const killTimer = setTimeout(() => { try { child && child.kill('SIGKILL'); } catch {} }, 15000);
+    const killTimer = setTimeout(() => { try { child && child.kill('SIGKILL'); } catch { } }, 15000);
 
     // dbaccess -e apli01 /tmp/script.sql  (SE usa DBPATH + INFORMIXSERVER)
     child = spawn(dbaccessBin, ['-e', DBNAME, sqlFile], {
@@ -118,11 +120,11 @@ ${String(sql).trim()}
           outFileSize = buf.length;
           payload = buf.toString('utf8');
         }
-      } catch (_) {}
+      } catch (_) { }
 
       // Limpieza
-      try { fs.unlinkSync(sqlFile); } catch {}
-      try { fs.unlinkSync(outFile); } catch {}
+      try { fs.unlinkSync(sqlFile); } catch { }
+      try { fs.unlinkSync(outFile); } catch { }
 
       console.log('[AFIX] dbaccess:close', {
         code, ms: Date.now() - start,
@@ -172,7 +174,7 @@ const app = express();
 
 
 //INICIACION MODULO WEDSOCKET
- const server = http.createServer(app);
+const server = http.createServer(app);
 // // Inicializar Socket.IO
 // const socketIO = new SocketIO(server);
 // // Inicializar manejadores de eventos
@@ -207,6 +209,7 @@ app.use('/control-access', controlAccessRoutes);
 app.use('/control-terminales', controlTerminalesRoutes); // Agrega esta línea
 app.use('/control-almacen', controlAlmacenRoutes);
 app.use('/control-optima', controlOptimaRoutes);
+app.use('/control-n8n', controlN8NRoutes);
 
 
 app.use('/control-afix', controlAfixRoutes);
@@ -314,15 +317,15 @@ app.get('/control-afix/healthz_2', (req, res) => {
 // Opcional: ?raw=1 para devolver líneas tal cual del UNLOAD
 app.post('/control-afix/sql_2', async (req, res) => {
   console.log('POST /control-afix/sql', { body: req.body, query: req.query });
-  
+
   try {
     const sqlIn = String((req.body && req.body.sql) || '').trim();
-    
+
     // El límite "first" ahora lo aplicamos en Node.js, no en el SQL
-    const limitRows = Number.isFinite(+req.body?.first) 
-      ? Math.max(1, Math.min(5000, +req.body.first)) 
+    const limitRows = Number.isFinite(+req.body?.first)
+      ? Math.max(1, Math.min(5000, +req.body.first))
       : 1000;
-      
+
     const rawMode = String(req.query.raw || '') === '1';
 
     if (!sqlIn) {
@@ -340,14 +343,14 @@ app.post('/control-afix/sql_2', async (req, res) => {
     }
 
     // 2. Limpieza básica del SQL
-    let sql = sqlIn.replace(/;+$/,'');
-    
+    let sql = sqlIn.replace(/;+$/, '');
+
     // IMPORTANTE: No añadimos "FIRST" aquí porque tu Informix SE no lo soporta
     console.log('[AFIX] Ejecutando SQL:', sql);
-    
+
     // 3. Ejecución en Informix
     const raw = await runAfixSelect(sql);
-    
+
     // 4. Procesamiento de líneas y limpieza de ruido del motor
     let lines = raw
       .split('\n')
@@ -368,7 +371,7 @@ app.post('/control-afix/sql_2', async (req, res) => {
 
     const rows = lines.map(line => line.split('|'));
     return res.json({ ok: true, count: rows.length, rows });
-    
+
   } catch (e) {
     console.error('[AFIX] Error en POST /sql:', e);
     return res.status(500).json({ ok: false, error: 'afix_select falló', detail: e.message });
@@ -407,13 +410,13 @@ server.listen(PORT, HOST, async () => {
   console.log('🚀 Versión desplegada: 6 de agosto - 15:00');
 
   console.log(`Servidor corriendo en puerto ${PORT}`);
-  
+
   // Iniciar el monitoreo de base de datos después de 3 segundos
   console.log('\n🔧 Iniciando sistema de monitoreo de base de datos...');
-  
+
   setTimeout(async () => {
     const connectionOk = await dbMonitor.testConnection();
-    
+
     if (connectionOk) {
       console.log('✅ Monitoreo de base de datos iniciado correctamente');
       dbMonitor.start();
