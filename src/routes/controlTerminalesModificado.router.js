@@ -753,6 +753,177 @@ router.get("/tiempo-real-nueva", async (req, res) => {
   }
 });
 
+
+// ✅ RUTA HISTÓRICA PARA N8N (sin restricción obligatoria de fecha)
+// Endpoint: GET /control-terminales/tiempo-real-historico-n8n
+// Opcional: ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD  (hasta exclusivo recomendado)
+// Opcional: ?fecha=YYYY-MM-DD (equivalente a un solo día)
+// Opcional: ?operador=...&tarea=...&pedido=... (filtros)
+// Opcional: ?limit=5000 (tope de seguridad; por defecto 20000)
+
+router.get("/tiempo-real-historico-n8n", async (req, res) => {
+  console.log("PETICION para tiempo-real-historico-n8n TERMINALES");
+
+  try {
+    const { operador, tarea, pedido, fecha, desde, hasta } = req.query;
+
+    // ⚠️ Para evitar traer millones de filas por accidente, dejo un limit alto por defecto.
+    // Si quieres literalmente TODO sin límite, puedes quitar el LIMIT o pasar limit=0 y manejarlo.
+    const limitParamRaw = req.query.limit;
+    let limit = 20000;
+    if (typeof limitParamRaw !== "undefined") {
+      const n = Number(limitParamRaw);
+      if (Number.isFinite(n) && n >= 0) limit = n; // 0 = sin LIMIT (ver más abajo)
+    }
+
+    // --- Construcción de filtros dinámicos ---
+    // NOTA: NO ponemos restricción de fecha por defecto (tal como pediste).
+    // Pero si viene fecha / desde-hasta, se aplica.
+
+    let whereH = " WHERE 1=1";
+    let whereP = " WHERE 1=1";
+    const paramsH = [];
+    const paramsP = [];
+
+    // Fecha exacta: aplica a ambas tablas
+    if (fecha) {
+      // valida simple YYYY-MM-DD (evita valores raros)
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+        return res.status(400).json({
+          status: "error",
+          message: "Parámetro 'fecha' inválido. Usa YYYY-MM-DD",
+        });
+      }
+      whereH += " AND h.Fecha = ?";
+      whereP += " AND p.Fecha = ?";
+      paramsH.push(fecha);
+      paramsP.push(fecha);
+    }
+
+    // Rango desde/hasta (hasta exclusivo recomendado)
+    // Ej: desde=2025-10-01&hasta=2025-11-01
+    // Si quieres inclusive, pasa hasta como "día siguiente".
+    if (desde) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(desde)) {
+        return res.status(400).json({
+          status: "error",
+          message: "Parámetro 'desde' inválido. Usa YYYY-MM-DD",
+        });
+      }
+      whereH += " AND h.Fecha >= ?";
+      whereP += " AND p.Fecha >= ?";
+      paramsH.push(desde);
+      paramsP.push(desde);
+    }
+
+    if (hasta) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(hasta)) {
+        return res.status(400).json({
+          status: "error",
+          message: "Parámetro 'hasta' inválido. Usa YYYY-MM-DD",
+        });
+      }
+      whereH += " AND h.Fecha < ?";
+      whereP += " AND p.Fecha < ?";
+      paramsH.push(hasta);
+      paramsP.push(hasta);
+    }
+
+    // Filtros por operador/tarea/pedido
+    if (operador) {
+      whereH += " AND h.OperarioNombre LIKE ?";
+      whereP += " AND p.OperarioNombre LIKE ?";
+      const v = `%${operador}%`;
+      paramsH.push(v);
+      paramsP.push(v);
+    }
+
+    if (tarea) {
+      whereH += " AND hl.CodigoTarea = ?";
+      whereP += " AND pl.CodigoTarea = ?";
+      paramsH.push(tarea);
+      paramsP.push(tarea);
+    }
+
+    if (pedido) {
+      whereH += " AND hl.NumeroManual LIKE ?";
+      whereP += " AND pl.NumeroManual LIKE ?";
+      const v = `%${pedido}%`;
+      paramsH.push(v);
+      paramsP.push(v);
+    }
+
+    // --- SQL ---
+    // OJO: Si quitas cualquier filtro de fechas, el query puede ser MUY pesado.
+    // Por eso dejo LIMIT alto por defecto (configurable).
+    const sql = `
+      SELECT
+        h.Serie, h.Numero, h.Fecha, h.CodigoOperario, h.OperarioNombre,
+        hl.CodigoSerie, hl.CodigoNumero, hl.Linea,
+        hl.FechaInicio, hl.HoraInicio, hl.FechaFin, hl.HoraFin,
+        hl.CodigoTarea, hl.NumeroManual, hl.Modulo,
+        hl.TiempoDedicado, hl.Abierta
+      FROM hpartes h
+      INNER JOIN hparteslineas hl
+        ON h.Serie = hl.CodigoSerie
+       AND h.Numero = hl.CodigoNumero
+      ${whereH}
+
+      UNION ALL
+
+      SELECT
+        p.Serie, p.Numero, p.Fecha, p.CodigoOperario, p.OperarioNombre,
+        pl.CodigoSerie, pl.CodigoNumero, pl.Linea,
+        pl.FechaInicio, pl.HoraInicio, pl.FechaFin, pl.HoraFin,
+        pl.CodigoTarea, pl.NumeroManual, pl.Modulo,
+        pl.TiempoDedicado, pl.Abierta
+      FROM partes p
+      INNER JOIN parteslineas pl
+        ON p.Serie = pl.CodigoSerie
+       AND p.Numero = pl.CodigoNumero
+      ${whereP}
+
+      ORDER BY FechaInicio DESC, HoraInicio DESC
+      ${limit === 0 ? "" : "LIMIT ?"}
+    `;
+
+    const allParams = [...paramsH, ...paramsP];
+    if (limit !== 0) allParams.push(limit);
+
+    const [rows] = await pool.execute(sql, allParams);
+
+    // --- Estadísticas (igual que tu endpoint actual) ---
+    const stats = {
+      total: rows.length,
+      porOperador: {},
+      porTarea: {},
+      porPedido: {},
+      abiertas: rows.filter((r) => r.Abierta === 1).length,
+    };
+
+    rows.forEach((row) => {
+      const op = row.OperarioNombre || "Sin operario";
+      const tar = row.CodigoTarea || "Sin tarea";
+      const ped = row.NumeroManual || "Sin pedido";
+
+      stats.porOperador[op] = (stats.porOperador[op] || 0) + 1;
+      stats.porTarea[tar] = (stats.porTarea[tar] || 0) + 1;
+      stats.porPedido[ped] = (stats.porPedido[ped] || 0) + 1;
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      filtros: { operador, tarea, pedido, fecha, desde, hasta, limit },
+      data: rows,
+      stats,
+    });
+  } catch (error) {
+    console.error("❌ ERROR EN /control-terminales/tiempo-real-historico-n8n:", error);
+    return res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+
 /**
  * ============================================================================
  * OPTIMIZACIÓN #5: /production-analytics - SEVERIDAD ALTA
