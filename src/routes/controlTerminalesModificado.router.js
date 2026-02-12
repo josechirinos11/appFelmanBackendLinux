@@ -924,6 +924,128 @@ router.get("/tiempo-real-historico-n8n", async (req, res) => {
 });
 
 
+router.get("/tiempo-real-historico-n8n-porFECHA", async (req, res) => {
+  console.log("PETICION para tiempo-real-historico-n8n-porFECHA TERMINALES");
+
+  try {
+    const { operador, tarea, pedido } = req.query;
+
+    // --- Construcción de filtros dinámicos ---
+    // Establecemos fecha desde hace 1 año desde HOY automáticamente
+    const hoy = new Date();
+    const haceUnAno = new Date();
+    haceUnAno.setFullYear(hoy.getFullYear() - 1);
+
+    // Formatear fechas a YYYY-MM-DD para comparación con DATE(campo)
+    const desdeDefault = haceUnAno.toISOString().split('T')[0];
+    const hastaDefault = hoy.toISOString().split('T')[0];
+
+    let whereH = " WHERE 1=1";
+    let whereP = " WHERE 1=1";
+    const paramsH = [];
+    const paramsP = [];
+
+    // Aplicar rango de fechas (último año) usando DATE() para manejar DATETIME
+    whereH += " AND DATE(h.Fecha) >= ? AND DATE(h.Fecha) <= ?";
+    whereP += " AND DATE(p.Fecha) >= ? AND DATE(p.Fecha) <= ?";
+    paramsH.push(desdeDefault, hastaDefault);
+    paramsP.push(desdeDefault, hastaDefault);
+
+    // Filtros por operador/tarea/pedido
+    if (operador) {
+      whereH += " AND h.OperarioNombre LIKE ?";
+      whereP += " AND p.OperarioNombre LIKE ?";
+      const v = `%${operador}%`;
+      paramsH.push(v);
+      paramsP.push(v);
+    }
+
+    if (tarea) {
+      whereH += " AND hl.CodigoTarea = ?";
+      whereP += " AND pl.CodigoTarea = ?";
+      paramsH.push(tarea);
+      paramsP.push(tarea);
+    }
+
+    if (pedido) {
+      whereH += " AND hl.NumeroManual LIKE ?";
+      whereP += " AND pl.NumeroManual LIKE ?";
+      const v = `%${pedido}%`;
+      paramsH.push(v);
+      paramsP.push(v);
+    }
+
+    // --- SQL SIN LÍMITE ---
+    const sql = `
+      SELECT
+        h.Serie, h.Numero, h.Fecha, h.CodigoOperario, h.OperarioNombre,
+        hl.CodigoSerie, hl.CodigoNumero, hl.Linea,
+        hl.FechaInicio, hl.HoraInicio, hl.FechaFin, hl.HoraFin,
+        hl.CodigoTarea, hl.NumeroManual, hl.Modulo,
+        hl.TiempoDedicado, hl.Abierta
+      FROM hpartes h
+      INNER JOIN hparteslineas hl
+        ON h.Serie = hl.CodigoSerie
+       AND h.Numero = hl.CodigoNumero
+      ${whereH}
+
+      UNION ALL
+
+      SELECT
+        p.Serie, p.Numero, p.Fecha, p.CodigoOperario, p.OperarioNombre,
+        pl.CodigoSerie, pl.CodigoNumero, pl.Linea,
+        pl.FechaInicio, pl.HoraInicio, pl.FechaFin, pl.HoraFin,
+        pl.CodigoTarea, pl.NumeroManual, pl.Modulo,
+        pl.TiempoDedicado, pl.Abierta
+      FROM partes p
+      INNER JOIN parteslineas pl
+        ON p.Serie = pl.CodigoSerie
+       AND p.Numero = pl.CodigoNumero
+      ${whereP}
+
+      ORDER BY FechaInicio DESC, HoraInicio DESC
+    `;
+
+    const allParams = [...paramsH, ...paramsP];
+
+    const [rows] = await pool.execute(sql, allParams);
+
+    // --- Estadísticas ---
+    const stats = {
+      total: rows.length,
+      rangoFechas: {
+        desde: desdeDefault,
+        hasta: hastaDefault
+      },
+      porOperador: {},
+      porTarea: {},
+      porPedido: {},
+      abiertas: rows.filter((r) => r.Abierta === 1).length,
+    };
+
+    rows.forEach((row) => {
+      const op = row.OperarioNombre || "Sin operario";
+      const tar = row.CodigoTarea || "Sin tarea";
+      const ped = row.NumeroManual || "Sin pedido";
+
+      stats.porOperador[op] = (stats.porOperador[op] || 0) + 1;
+      stats.porTarea[tar] = (stats.porTarea[tar] || 0) + 1;
+      stats.porPedido[ped] = (stats.porPedido[ped] || 0) + 1;
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      filtros: { operador, tarea, pedido },
+      data: rows,
+      stats,
+    });
+  } catch (error) {
+    console.error("❌ ERROR EN /control-terminales/tiempo-real-historico-n8n-porFECHA:", error);
+    return res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+
 /**
  * ============================================================================
  * OPTIMIZACIÓN #5: /production-analytics - SEVERIDAD ALTA
