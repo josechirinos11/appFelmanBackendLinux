@@ -828,9 +828,9 @@ router.get('/tickets/dashboard', async (req, res) => {
 // ── MIS TICKETS: tickets del usuario (query param: usuario_id) ─
 router.get('/tickets/mis-tickets', async (req, res) => {
   const { usuario_id } = req.query;
-  if (!usuario_id) {
-    return res.status(400).json({ status: 'error', message: 'Se requiere usuario_id como query param' });
-  }
+  // Convertir a entero (MongoDB _id string → NaN → 0); si falta, usar 0
+  const uid = parseInt(String(usuario_id ?? 0), 10);
+  const uidSafe = isNaN(uid) ? 0 : uid;
   try {
     const [rows] = await poolAlmacen.query(`
       SELECT
@@ -842,7 +842,7 @@ router.get('/tickets/mis-tickets', async (req, res) => {
       LEFT JOIN tf_usuarios d ON t.desarrollador_id = d.id
       WHERE t.usuario_id = ?
       ORDER BY t.created_at DESC
-    `, [usuario_id]);
+    `, [uidSafe]);
     res.json({ status: 'ok', data: rows });
   } catch (error) {
     console.error('❌ Error en /tickets/mis-tickets:', error);
@@ -947,18 +947,22 @@ router.put('/tickets/usuariosactualizar/:id', async (req, res) => {
 // Body: titulo, descripcion, tipo_referencia, numero_referencia?, prioridad?, usuario_id
 router.post('/tickets/crear', async (req, res) => {
   const { titulo, descripcion, tipo_referencia, numero_referencia, prioridad, usuario_id } = req.body;
-  if (!titulo || !descripcion || !tipo_referencia || !usuario_id) {
+  // usuario_id puede ser 0 (usuario Lambda/MongoDB) — solo validar texto obligatorio
+  if (!titulo || !descripcion || !tipo_referencia) {
     return res.status(400).json({
       status: 'error',
-      message: 'Faltan campos obligatorios: titulo, descripcion, tipo_referencia, usuario_id'
+      message: 'Faltan campos obligatorios: titulo, descripcion, tipo_referencia'
     });
   }
+  // Convertir usuario_id a entero seguro (string MongoDB _id → 0)
+  const usuarioIdInt = parseInt(String(usuario_id ?? 0), 10);
+  const uid = isNaN(usuarioIdInt) ? 0 : usuarioIdInt;
   try {
     const [result] = await poolAlmacen.query(
       `INSERT INTO tf_tickets
          (titulo, descripcion, tipo_referencia, numero_referencia, prioridad, usuario_id)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [titulo, descripcion, tipo_referencia, numero_referencia || null, prioridad || 'media', usuario_id]
+      [titulo, descripcion, tipo_referencia, numero_referencia || null, prioridad || 'media', uid]
     );
     const ticketId = result.insertId;
 
@@ -967,7 +971,7 @@ router.post('/tickets/crear', async (req, res) => {
       `INSERT INTO tf_ticket_historial
          (ticket_id, usuario_id, tipo, estado_nuevo, mensaje)
        VALUES (?, ?, 'creacion', 'abierto', 'Ticket creado')`,
-      [ticketId, usuario_id]
+      [ticketId, uid]
     );
 
     res.json({ status: 'ok', message: 'Ticket creado correctamente', data: { id: ticketId } });
@@ -982,9 +986,10 @@ router.post('/tickets/crear', async (req, res) => {
 router.put('/tickets/estadoactualizar/:id', async (req, res) => {
   const { id } = req.params;
   const { estado, feedback, usuario_id } = req.body;
-  if (!estado || !usuario_id) {
-    return res.status(400).json({ status: 'error', message: 'Se requieren estado y usuario_id' });
+  if (!estado) {
+    return res.status(400).json({ status: 'error', message: 'Se requiere estado' });
   }
+  const uid = parseInt(String(usuario_id ?? 0), 10) || 0;
   try {
     const [tickets] = await poolAlmacen.query(
       'SELECT estado FROM tf_tickets WHERE id = ?', [id]
@@ -996,14 +1001,14 @@ router.put('/tickets/estadoactualizar/:id', async (req, res) => {
 
     await poolAlmacen.query(
       'UPDATE tf_tickets SET estado = ?, desarrollador_id = ?, updated_at = NOW() WHERE id = ?',
-      [estado, usuario_id, id]
+      [estado, uid, id]
     );
 
     await poolAlmacen.query(
       `INSERT INTO tf_ticket_historial
          (ticket_id, usuario_id, tipo, estado_anterior, estado_nuevo, mensaje)
        VALUES (?, ?, 'cambio_estado', ?, ?, ?)`,
-      [id, usuario_id, estadoAnterior, estado, feedback || null]
+      [id, uid, estadoAnterior, estado, feedback || null]
     );
 
     res.json({ status: 'ok', message: 'Estado actualizado correctamente' });
@@ -1018,15 +1023,16 @@ router.put('/tickets/estadoactualizar/:id', async (req, res) => {
 router.post('/tickets/feedbackcrear/:id', async (req, res) => {
   const { id } = req.params;
   const { mensaje, usuario_id } = req.body;
-  if (!mensaje || !usuario_id) {
-    return res.status(400).json({ status: 'error', message: 'Se requieren mensaje y usuario_id' });
+  if (!mensaje) {
+    return res.status(400).json({ status: 'error', message: 'Se requiere mensaje' });
   }
+  const uid = parseInt(String(usuario_id ?? 0), 10) || 0;
   try {
     await poolAlmacen.query(
       `INSERT INTO tf_ticket_historial
          (ticket_id, usuario_id, tipo, mensaje)
        VALUES (?, ?, 'feedback', ?)`,
-      [id, usuario_id, mensaje]
+      [id, uid, mensaje]
     );
     res.json({ status: 'ok', message: 'Comentario agregado correctamente' });
   } catch (error) {
