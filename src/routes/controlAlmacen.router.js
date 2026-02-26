@@ -1,9 +1,30 @@
 
 // src/routes/controlAlmacen.router.js
 const express = require('express');
+const path    = require('path');
+const multer  = require('multer');
 const poolAlmacen = require('../config/databaseAlamcen');
 const bcrypt = require('bcryptjs');
 const router = express.Router();
+
+// ── Multer: almacenamiento de imágenes de tickets ─────────────
+const ticketStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(__dirname, '../../uploads/tickets'));
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.jpg';
+    cb(null, `ticket_${req.params.id}_${Date.now()}${ext}`);
+  },
+});
+const uploadTicket = multer({
+  storage: ticketStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB máx
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Solo se permiten imágenes'));
+  },
+});
 
 // Ruta /inicio para verificar conexión
 router.get('/inicio', async (req, res) => {
@@ -1048,6 +1069,25 @@ router.post('/tickets/feedbackcrear/:id', async (req, res) => {
     res.json({ status: 'ok', message: 'Comentario agregado correctamente' });
   } catch (error) {
     console.error('❌ Error en /tickets/feedbackcrear/:id:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno', detail: error.message });
+  }
+});
+
+// ── SUBIR IMAGEN DE TICKET ────────────────────────────────────
+router.post('/tickets/imagensubir/:id', uploadTicket.single('imagen'), async (req, res) => {
+  const { id } = req.params;
+  if (!req.file) {
+    return res.status(400).json({ status: 'error', message: 'No se recibió ninguna imagen' });
+  }
+  const imagenPath = `/uploads/tickets/${req.file.filename}`;
+  try {
+    await poolAlmacen.query(
+      'UPDATE tf_tickets SET imagen_path = ?, updated_at = NOW() WHERE id = ?',
+      [imagenPath, id]
+    );
+    res.json({ status: 'ok', message: 'Imagen subida correctamente', data: { imagen_path: imagenPath } });
+  } catch (error) {
+    console.error('❌ Error en /tickets/imagensubir/:id:', error);
     res.status(500).json({ status: 'error', message: 'Error interno', detail: error.message });
   }
 });

@@ -380,6 +380,9 @@ app.post('/control-afix/sql_2', async (req, res) => {
 
 
 
+// Servir imágenes subidas (tickets, etc.)
+app.use('/uploads', express.static(path.join(rootPath, 'uploads')));
+
 // Para rutas SPA (React Native Web)
 // Servir archivos estáticos desde 'dist'
 // ✅ Solo aquí colocas dist y SPA fallback
