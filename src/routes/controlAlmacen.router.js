@@ -1052,6 +1052,24 @@ router.post('/tickets/feedbackcrear/:id', async (req, res) => {
   }
 });
 
+// ── ELIMINAR TICKET ──────────────────────────────────────────
+router.delete('/tickets/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [tickets] = await poolAlmacen.query('SELECT id FROM tf_tickets WHERE id = ?', [id]);
+    if (tickets.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'Ticket no encontrado' });
+    }
+    // Eliminar historial primero por si existe FK historial → tickets
+    await poolAlmacen.query('DELETE FROM tf_ticket_historial WHERE ticket_id = ?', [id]);
+    await poolAlmacen.query('DELETE FROM tf_tickets WHERE id = ?', [id]);
+    res.json({ status: 'ok', message: 'Ticket eliminado correctamente' });
+  } catch (error) {
+    console.error('❌ Error en DELETE /tickets/:id:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno', detail: error.message });
+  }
+});
+
 // ── DETALLE DE UN TICKET (con historial) ─────────────────────
 // IMPORTANTE: debe estar al FINAL entre las rutas GET /tickets/*
 // para no capturar antes: dashboard, mis-tickets, todos, usuarios
