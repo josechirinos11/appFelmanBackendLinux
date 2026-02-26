@@ -734,6 +734,12 @@ router.get('/control-instaladores/obtenerinformacionUsuario', async (req, res) =
 // ── INIT: crear tablas si no existen ─────────────────────────
 router.get('/tickets/init', async (req, res) => {
   try {
+    // Eliminar FKs antiguas si existen (migración segura, ignora error si no hay FK)
+    try { await poolAlmacen.query('ALTER TABLE tf_tickets DROP FOREIGN KEY tf_tickets_ibfk_1'); } catch (_) {}
+    try { await poolAlmacen.query('ALTER TABLE tf_tickets DROP FOREIGN KEY tf_tickets_ibfk_2'); } catch (_) {}
+    try { await poolAlmacen.query('ALTER TABLE tf_ticket_historial DROP FOREIGN KEY tf_ticket_historial_ibfk_1'); } catch (_) {}
+    try { await poolAlmacen.query('ALTER TABLE tf_ticket_historial DROP FOREIGN KEY tf_ticket_historial_ibfk_2'); } catch (_) {}
+
     await poolAlmacen.query(`
       CREATE TABLE IF NOT EXISTS tf_usuarios (
         id         INT AUTO_INCREMENT PRIMARY KEY,
