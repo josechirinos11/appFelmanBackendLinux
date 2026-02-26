@@ -973,13 +973,17 @@ router.post('/tickets/crear', async (req, res) => {
     );
     const ticketId = result.insertId;
 
-    // Registro inicial en historial
-    await poolAlmacen.query(
-      `INSERT INTO tf_ticket_historial
-         (ticket_id, usuario_id, tipo, estado_nuevo, mensaje)
-       VALUES (?, ?, 'creacion', 'abierto', 'Ticket creado')`,
-      [ticketId, uid]
-    );
+    // Registro inicial en historial (no bloquea si falla FK legacy)
+    try {
+      await poolAlmacen.query(
+        `INSERT INTO tf_ticket_historial
+           (ticket_id, usuario_id, tipo, estado_nuevo, mensaje)
+         VALUES (?, ?, 'creacion', 'abierto', 'Ticket creado')`,
+        [ticketId, uid]
+      );
+    } catch (histErr) {
+      console.warn('⚠️ Historial no registrado (FK pendiente de eliminar):', histErr.message);
+    }
 
     res.json({ status: 'ok', message: 'Ticket creado correctamente', data: { id: ticketId } });
   } catch (error) {
