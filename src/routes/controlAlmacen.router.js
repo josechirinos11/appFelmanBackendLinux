@@ -946,6 +946,7 @@ router.put('/tickets/usuariosactualizar/:id', async (req, res) => {
 // ── CREAR TICKET ──────────────────────────────────────────────
 // Body: titulo, descripcion, tipo_referencia, numero_referencia?, prioridad?, usuario_id
 router.post('/tickets/crear', async (req, res) => {
+  console.log(`[TICKETS] POST /tickets/crear - content-type: ${req.headers['content-type']} - body:`, JSON.stringify(req.body));
   const { titulo, descripcion, tipo_referencia, numero_referencia, prioridad, usuario_id } = req.body;
   // usuario_id puede ser 0 (usuario Lambda/MongoDB) — solo validar texto obligatorio
   if (!titulo || !descripcion || !tipo_referencia) {
