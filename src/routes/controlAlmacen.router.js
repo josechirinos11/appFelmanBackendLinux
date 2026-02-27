@@ -2,6 +2,7 @@
 // src/routes/controlAlmacen.router.js
 const express = require('express');
 const path    = require('path');
+const fs      = require('fs');
 const multer  = require('multer');
 const poolAlmacen = require('../config/databaseAlamcen');
 const bcrypt = require('bcryptjs');
@@ -10,7 +11,9 @@ const router = express.Router();
 // ── Multer: almacenamiento de imágenes de tickets ─────────────
 const ticketStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, '../../uploads/tickets'));
+    const dir = path.join(__dirname, '../../uploads/tickets');
+    fs.mkdirSync(dir, { recursive: true }); // crea el directorio si no existe
+    cb(null, dir);
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname) || '.jpg';
