@@ -7,6 +7,9 @@ cd /appFelmanBackendLinux || {
   exit 1
 }
 
+echo "🧹 Descartando cambios en archivos generados..."
+git checkout -- package-lock.json node_modules/.package-lock.json 2>/dev/null || true
+
 echo "📥 Haciendo git pull..."
 git pull origin main
 

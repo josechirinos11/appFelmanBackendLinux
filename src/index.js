@@ -20,6 +20,7 @@ const controlAfixRoutes = require('./routes/controlAfix.routes.js');
 const controlAfixLegacyRoutes = require('./routes/control-afix.js');
 
 const controlN8NRoutes = require('./routes/controlN8N.routes.js');
+const controlCrudTablasRoutes = require('./routes/controlCrudTablas.routes.js');
 
 const path = require('path');
 const rootPath = path.join(__dirname, '..');
@@ -210,6 +211,7 @@ app.use('/control-terminales', controlTerminalesRoutes); // Agrega esta línea
 app.use('/control-almacen', controlAlmacenRoutes);
 app.use('/control-optima', controlOptimaRoutes);
 app.use('/control-n8n', controlN8NRoutes);
+app.use('/crud-tablas', controlCrudTablasRoutes);
 
 
 app.use('/control-afix', controlAfixRoutes);
