@@ -13,7 +13,7 @@ try {
 
 const router = express.Router();
 
-const ROLES_APP = ['administrador', 'instalador', 'supervisor', 'fabrica', 'developer', 'usuario'];
+const ROLES_APP = ['administrador', 'instalador', 'supervisor', 'fabrica', 'developer', 'usuario', 'comercial'];
 const GRUPOS_INSTALADOR = ['Alfa', 'Bravo', 'Beta', 'Felman'];
 const ROLES_TF = ['usuario', 'desarrollador'];
 
